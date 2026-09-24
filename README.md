@@ -7,7 +7,7 @@ Most container images run the server as PID 1, which means `docker exec` drops y
 ## Quick start
 
 ```bash
-cp .env.example .env     # set ADMIN_PASSWORD; the container refuses to start without it
+cp .env.example .env     # everything has a default; edit what you need
 docker compose up -d
 ```
 
@@ -22,7 +22,7 @@ Use a **Git-based** resource with the **Dockerfile** build pack. Coolify clones 
 3. **Ports Mappings**: `16261:16261/udp, 16262:16262/udp, 127.0.0.1:27015:27015/tcp`
 4. **Persistent Storage**: two volumes, mounted at `/home/pz/Zomboid` (world, config, database) and `/opt/pzserver` (game install).
 5. **Advanced**: stop grace period `120` seconds, memory limit `5g`, health check disabled (the game exposes no HTTP endpoint).
-6. **Environment Variables**: at least `ADMIN_PASSWORD`; then `WHITELIST`, `PZ_OPEN=false`, `PZ_RCON_PASSWORD`, `MEMORY=3g` as needed. Everything else has defaults.
+6. **Environment Variables**: `WHITELIST`, `PZ_OPEN=false`, `PZ_RCON_PASSWORD`, `MEMORY=3g` as needed. Everything else has defaults; `ADMIN_PASSWORD` can stay empty.
 7. Deploy. The first deployment builds the image and then downloads ~7 GB from Steam, so give it time and watch the container logs, not just the build log.
 
 Notes for Coolify:
@@ -64,6 +64,18 @@ The port is published on `RCON_BIND`, which defaults to `127.0.0.1`, so it is re
 ssh -L 27015:127.0.0.1:27015 user@host
 rcon -a 127.0.0.1:27015 -p "$PZ_RCON_PASSWORD" players
 ```
+
+## Admin account
+
+The game insists on a bootstrap account called `admin` and asks for its password interactively on first boot, so the entrypoint always passes one. When `ADMIN_PASSWORD` is empty it generates a random 32-character password and does not log it.
+
+You do not need that account. RCON and the console run server commands without any account, and in-game admin rights belong to whichever account you grant them to. Join once with your own Steam-bound account, then:
+
+```
+setaccesslevel "<your name>" admin
+```
+
+Roles, from the game's database: `admin`, `moderator`, `gm`, `observer`, `priority`, `user`. The bootstrap `admin` account is the one login that bypasses `Open=false` and the SteamID list, which is exactly why it should have a password nobody knows. If you ever need it, reset it from the console with `setpassword "admin" <new password>`.
 
 ## Whitelist by SteamID
 
@@ -107,7 +119,7 @@ Copy `.env.example` to `.env` and adjust.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ADMIN_PASSWORD` | — | **required**, admin account password |
+| `ADMIN_PASSWORD` | random | bootstrap `admin` account password; generated when empty, see below |
 | `SERVER_NAME` | `pzserver` | server name and config file name |
 | `MEMORY` | `3g` | JVM heap; ~3g is a sensible floor for ~6 players |
 | `MEM_LIMIT` | `5g` | hard container RAM ceiling, keep above `MEMORY` |
@@ -124,7 +136,7 @@ Copy `.env.example` to `.env` and adjust.
 | `STARTUP_TIMEOUT` | `300` | seconds to wait for `SERVER STARTED` before skipping post-start steps |
 | `TZ` | `UTC` | container time zone |
 
-`ADMIN_PASSWORD` and `PZ_RCON_PASSWORD` are passed as environment variables and the admin password also appears on the game's command line, so anyone who can `docker exec` or `docker inspect` the container can read them. That is the norm for game servers; just do not reuse real passwords.
+`PZ_RCON_PASSWORD` is passed as an environment variable and the admin password (set or generated) appears on the game's command line, so anyone who can `docker exec` or `docker inspect` the container can read them. That is the norm for game servers; just do not reuse real passwords.
 
 ### Server `.ini` settings
 

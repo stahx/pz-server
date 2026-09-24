@@ -216,10 +216,11 @@ graceful_stop() {
 
 trap graceful_stop SIGTERM SIGINT
 
+# The game insists on a bootstrap 'admin' account. Nobody needs to log in with it:
+# grant admin to your own Steam-bound account instead (setaccesslevel "<name>" admin).
 if [ -z "$ADMIN_PASSWORD" ]; then
-  log "ERROR: ADMIN_PASSWORD is empty. Set it in the environment and restart."
-  sleep 30
-  exit 1
+  ADMIN_PASSWORD="$(head -c 512 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-32)"
+  log "ADMIN_PASSWORD not set: generated a random one for the bootstrap admin account (not logged)"
 fi
 
 update_server
