@@ -15,22 +15,19 @@ The first start downloads roughly 7 GB from Steam and takes ten to twenty minute
 
 ## Deploying with Coolify
 
-Use a **Git-based** resource with the **Dockerfile** build pack. Coolify clones the repository, builds `Dockerfile` (the scripts are copied in during the build) and takes ports, volumes, limits and environment from its own settings. `docker-compose.yaml` is not used by Coolify; it stays in the repository for running the server without a panel.
+Use a **Git-based** resource with the **Docker Compose** build pack: Coolify clones the repository, builds the image from `Dockerfile` and takes ports, volumes, memory limit and `stop_grace_period` straight from `docker-compose.yaml`. Verified on Coolify 4.3: the UDP ports come out public, RCON stays bound to `127.0.0.1`, the 120 s stop grace period is kept.
 
 1. Project → **New Resource** → **Private Repository (with GitHub App)** → this repository, branch `main`.
-2. **Build Pack: Dockerfile**. Leave **Domains** empty; set **Ports Exposes** to `16261` (Coolify requires a value, it is only used for its proxy).
-3. **Ports Mappings**: `16261:16261/udp, 16262:16262/udp, 127.0.0.1:27015:27015/tcp`
-4. **Persistent Storage**: two volumes, mounted at `/home/pz/Zomboid` (world, config, database) and `/opt/pzserver` (game install).
-5. **Advanced**: stop grace period `120` seconds, memory limit `5g`, health check disabled (the game exposes no HTTP endpoint).
-6. **Environment Variables**: `WHITELIST_STEAMID`, `PZ_OPEN=false`, `PZ_RCON_PASSWORD`, `MEMORY=3g` as needed. Everything else has defaults; `ADMIN_PASSWORD` can stay empty.
-7. Deploy. The first deployment builds the image and then downloads ~7 GB from Steam, so give it time and watch the container logs, not just the build log. If you set any `PZ_*` variable or `WHITELIST_STEAMID`, the container restarts itself once after that first boot to apply them; Coolify may show it as restarting for a minute.
+2. **Build Pack: Docker Compose**, compose location `/docker-compose.yaml` (the default). Leave **Domains** empty.
+3. **Environment Variables**: Coolify lists every `${VAR}` from the compose file with its default. Set `WHITELIST_STEAMID`, `PZ_OPEN=false`, `PZ_RCON_PASSWORD`, `MEMORY=3g` as needed; `ADMIN_PASSWORD` can stay empty.
+4. Deploy. The first deployment builds the image and then downloads ~7 GB from Steam, so give it time and watch the container logs, not just the build log. If you set any `PZ_*` variable or `WHITELIST_STEAMID`, the container restarts itself once after that first boot to apply them; Coolify may show it as restarting for a minute.
 
 Notes for Coolify:
 
-- Coolify names the container itself, so `docker exec -it pz-server …` from this README becomes the Coolify container name. Inside Coolify's **Terminal** for the resource just run `console` or `rcon players`.
-- Environment variables set in Coolify are the source of truth on every deploy; the `.ini` mapping rules above apply unchanged.
-- After the first deploy, confirm on the host that the UDP ports are published (`ss -lun | grep 1626`) and that RCON is bound to `127.0.0.1` only.
+- Coolify names the container (`pz-server-<uuid>`) and prefixes the volumes (`<uuid>_pz-data`, `<uuid>_pz-server`) itself, so `docker exec -it pz-server …` from this README becomes that container name. Inside Coolify's **Terminal** for the resource just run `console` or `rcon players`.
+- Environment variables set in Coolify are the source of truth on every deploy; a value set there overrides the compose default, an empty one leaves the `.ini` key alone, exactly as described below.
 - Every push to `main` triggers a rebuild and redeploy through the GitHub App webhook. The world is on the volume and survives it, but players get disconnected, so push when nobody is playing.
+- The **Dockerfile** build pack works too; you then enter the ports, both volumes, the memory limit and the stop grace period (120 s, under Advanced) in Coolify's UI by hand.
 
 ## Server console
 
@@ -135,7 +132,7 @@ Copy `.env.example` to `.env` and adjust.
 | `STEAM_VALIDATE` | `false` | re-verify all files on start |
 | `UPDATE_ATTEMPTS` | `3` | SteamCMD retries |
 | `STOP_TIMEOUT` | `90` | seconds to wait for the world to save |
-| `STARTUP_TIMEOUT` | `300` | seconds to wait for `SERVER STARTED` before skipping post-start steps |
+| `STARTUP_TIMEOUT` | `300` | seconds to wait for `SERVER STARTED` on a first boot before skipping the one-time restart |
 | `TZ` | `UTC` | container time zone |
 
 `PZ_RCON_PASSWORD` is passed as an environment variable and the admin password (set or generated) appears on the game's command line, so anyone who can `docker exec` or `docker inspect` the container can read them. That is the norm for game servers; just do not reuse real passwords.
@@ -161,7 +158,7 @@ The game creates the `.ini` during its first boot and only reads it at startup. 
 
 ## Ports
 
-Open **UDP 16261 and 16262** on your firewall. Players connect to `<host>:16261`. Leave the RCON port closed; use the SSH tunnel described above.
+Open **UDP 16261 and 16262** on your firewall (one rule with the range `16261-16262` on a cloud firewall). Players connect to `<host>:16261`; the game uses 16262 for the direct player connection. If only 16261 is open the game still works through the main port, but every client shows a "server port 16262 is closed" warning and connection quality may suffer. Leave the RCON port closed; use the SSH tunnel described above.
 
 ## Volumes
 
