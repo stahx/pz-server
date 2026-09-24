@@ -8,20 +8,27 @@ services:
     stop_grace_period: 120s
     environment:
       SERVER_NAME: ${SERVER_NAME:-pzserver}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       MEMORY: ${MEMORY:-3g}
       SKIP_UPDATE: ${SKIP_UPDATE:-false}
+      STEAM_VALIDATE: ${STEAM_VALIDATE:-false}
+      UPDATE_ATTEMPTS: ${UPDATE_ATTEMPTS:-3}
       STOP_TIMEOUT: ${STOP_TIMEOUT:-90}
+      STARTUP_TIMEOUT: ${STARTUP_TIMEOUT:-300}
       TZ: ${TZ:-UTC}
+      WHITELIST: ${WHITELIST:-}
       PZ_OPEN: ${PZ_OPEN:-}
       PZ_PUBLIC: ${PZ_PUBLIC:-}
       PZ_PUBLIC_NAME: ${PZ_PUBLIC_NAME:-}
       PZ_SERVER_PASSWORD: ${PZ_SERVER_PASSWORD:-}
       PZ_MAX_PLAYERS: ${PZ_MAX_PLAYERS:-}
       PZ_PAUSE_EMPTY: ${PZ_PAUSE_EMPTY:-}
+      PZ_RCON_PORT: ${PZ_RCON_PORT:-27015}
+      PZ_RCON_PASSWORD: ${PZ_RCON_PASSWORD:-}
     ports:
       - '${GAME_PORT:-16261}:16261/udp'
       - '${PLAYER_PORT:-16262}:16262/udp'
+      - '${RCON_BIND:-127.0.0.1}:${PZ_RCON_PORT:-27015}:${PZ_RCON_PORT:-27015}/tcp'
     volumes:
       - pz-data:/home/pz/Zomboid
       - pz-server:/opt/pzserver

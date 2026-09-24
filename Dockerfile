@@ -1,5 +1,7 @@
 FROM --platform=linux/amd64 debian:bookworm-slim
 
+ARG RCON_CLI_VERSION=0.10.3
+
 ENV DEBIAN_FRONTEND=noninteractive \
     STEAM_APP_ID=380870 \
     STEAMCMD_DIR=/opt/steamcmd \
@@ -17,11 +19,17 @@ RUN dpkg --add-architecture i386 \
       locales \
       procps \
       screen \
+      sqlite3 \
       tini \
       tzdata \
  && sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen \
  && locale-gen \
  && rm -rf /var/lib/apt/lists/*
+
+RUN curl -sSL "https://github.com/gorcon/rcon-cli/releases/download/v${RCON_CLI_VERSION}/rcon-${RCON_CLI_VERSION}-amd64_linux.tar.gz" \
+    | tar -xz --wildcards --strip-components=1 -C /usr/local/bin '*/rcon' \
+ && mv /usr/local/bin/rcon /usr/local/bin/rcon-cli \
+ && chmod +x /usr/local/bin/rcon-cli
 
 RUN useradd --create-home --shell /bin/bash pz
 
@@ -34,11 +42,12 @@ RUN mkdir -p "$ZOMBOID_DIR" && chown -R pz:pz /home/pz
 
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/console.sh /usr/local/bin/console
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/console
+COPY scripts/rcon.sh /usr/local/bin/rcon
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/console /usr/local/bin/rcon
 
 USER pz
 WORKDIR /home/pz
 
-EXPOSE 16261/udp 16262/udp
+EXPOSE 16261/udp 16262/udp 27015/tcp
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

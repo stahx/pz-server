@@ -8,12 +8,18 @@ ZOMBOID_DIR="${ZOMBOID_DIR:-/home/pz/Zomboid}"
 STEAM_APP_ID="${STEAM_APP_ID:-380870}"
 
 SERVER_NAME="${SERVER_NAME:-pzserver}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-changeme}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 MEMORY="${MEMORY:-3g}"
 SKIP_UPDATE="${SKIP_UPDATE:-false}"
+STEAM_VALIDATE="${STEAM_VALIDATE:-false}"
+UPDATE_ATTEMPTS="${UPDATE_ATTEMPTS:-3}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-90}"
+STARTUP_TIMEOUT="${STARTUP_TIMEOUT:-300}"
+WHITELIST="${WHITELIST:-}"
 
 SCREEN_LOG="${ZOMBOID_DIR}/console-screen.log"
+INI_FILE="${ZOMBOID_DIR}/Server/${SERVER_NAME}.ini"
+DB_FILE="${ZOMBOID_DIR}/db/${SERVER_NAME}.db"
 
 log() {
   echo "[entrypoint] $(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"
@@ -25,16 +31,21 @@ update_server() {
     return 0
   fi
 
+  local validate_arg=""
+  if [ "$STEAM_VALIDATE" = "true" ]; then
+    validate_arg="validate"
+    log "STEAM_VALIDATE=true, steamcmd will re-verify every file (slow)"
+  fi
+
   local attempt=1
-  local max_attempts="${UPDATE_ATTEMPTS:-3}"
+  while [ "$attempt" -le "$UPDATE_ATTEMPTS" ]; do
+    log "updating server (app ${STEAM_APP_ID}), attempt ${attempt}/${UPDATE_ATTEMPTS}"
 
-  while [ "$attempt" -le "$max_attempts" ]; do
-    log "updating server (app ${STEAM_APP_ID}), attempt ${attempt}/${max_attempts}"
-
+    # shellcheck disable=SC2086
     "${STEAMCMD_DIR}/steamcmd.sh" \
       +force_install_dir "$SERVER_DIR" \
       +login anonymous \
-      +app_update "$STEAM_APP_ID" validate \
+      +app_update "$STEAM_APP_ID" $validate_arg \
       +quit || true
 
     # steamcmd exit codes are unreliable, so check for the actual artifact.
@@ -48,7 +59,7 @@ update_server() {
     sleep 10
   done
 
-  log "ERROR: update failed after ${max_attempts} attempts"
+  log "ERROR: update failed after ${UPDATE_ATTEMPTS} attempts"
   return 1
 }
 
@@ -60,11 +71,14 @@ apply_memory_limit() {
   sed -i -E "s/\"-Xmx[^\"]*\"/\"-Xmx${MEMORY}\"/; s/\"-Xms[^\"]*\"/\"-Xms${MEMORY}\"/" "$config"
 }
 
-apply_ini_settings() {
-  local ini="${ZOMBOID_DIR}/Server/${SERVER_NAME}.ini"
+# Escapes a value for use on the right-hand side of a sed s|||-expression.
+sed_escape() {
+  printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
+}
 
-  if [ ! -f "$ini" ]; then
-    log "${ini} not found; it is created on first boot, settings apply from the next start"
+apply_ini_settings() {
+  if [ ! -f "$INI_FILE" ]; then
+    log "${INI_FILE} not found; it is created on first boot, settings apply from the next start"
     return 0
   fi
 
@@ -76,9 +90,11 @@ apply_ini_settings() {
     "PZ_SERVER_PASSWORD:Password"
     "PZ_MAX_PLAYERS:MaxPlayers"
     "PZ_PAUSE_EMPTY:PauseEmpty"
+    "PZ_RCON_PORT:RCONPort"
+    "PZ_RCON_PASSWORD:RCONPassword"
   )
 
-  local entry env_name ini_key value
+  local entry env_name ini_key value escaped
   for entry in "${mappings[@]}"; do
     env_name="${entry%%:*}"
     ini_key="${entry##*:}"
@@ -86,22 +102,36 @@ apply_ini_settings() {
 
     [ -z "$value" ] && continue
 
-    if grep -qE "^${ini_key}=" "$ini"; then
-      sed -i -E "s|^${ini_key}=.*|${ini_key}=${value}|" "$ini"
+    escaped="$(sed_escape "$value")"
+    if grep -q "^${ini_key}=" "$INI_FILE"; then
+      sed -i "s|^${ini_key}=.*|${ini_key}=${escaped}|" "$INI_FILE"
     else
-      echo "${ini_key}=${value}" >> "$ini"
+      printf '%s=%s\n' "$ini_key" "$value" >> "$INI_FILE"
     fi
-    log "ini: ${ini_key}=${value}"
+
+    if [ "$ini_key" = "RCONPassword" ]; then
+      log "ini: ${ini_key}=<set>"
+    else
+      log "ini: ${ini_key}=${value}"
+    fi
   done
 }
 
-warn_if_whitelist_empty() {
+# With Open=false only the admin, listed SteamIDs and existing accounts can join.
+# Warn when none of the latter two exist, so a closed server does not lock everyone out.
+warn_if_locked_out() {
   [ "${PZ_OPEN:-}" = "false" ] || return 0
+  [ -z "$WHITELIST" ] || return 0
 
-  local db="${ZOMBOID_DIR}/db/${SERVER_NAME}.db"
-  if [ ! -s "$db" ]; then
-    log "WARNING: PZ_OPEN=false (whitelist mode) but no player database exists yet."
-    log "WARNING: only the admin account can join. Add players from the console: adduser <name> <password>"
+  local allowed=0 accounts=0
+  if [ -s "$DB_FILE" ]; then
+    allowed="$(sqlite3 "$DB_FILE" 'SELECT COUNT(*) FROM allowedsteamid;' 2>/dev/null || echo 0)"
+    accounts="$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM whitelist WHERE username <> 'admin';" 2>/dev/null || echo 0)"
+  fi
+
+  if [ "$allowed" = "0" ] && [ "$accounts" = "0" ]; then
+    log "WARNING: PZ_OPEN=false with no allowed SteamIDs and no player accounts: only 'admin' can join."
+    log "WARNING: set WHITELIST=<steamid64>;<steamid64> or run in the console: addsteamid \"<steamid64>\""
   fi
 }
 
@@ -119,10 +149,50 @@ start_server() {
     cat "$SCREEN_LOG" 2>/dev/null || true
     exit 1
   fi
+  screen -S "$SCREEN_NAME" -X logfile flush 1
 }
 
 send_console() {
   screen -S "$SCREEN_NAME" -p 0 -X stuff "$1$(printf '\r')"
+}
+
+wait_for_server_started() {
+  local waited=0
+  while ! grep -aq 'SERVER STARTED' "$SCREEN_LOG"; do
+    if ! screen -list | grep -q "$SCREEN_NAME"; then
+      log "ERROR: server exited during startup"
+      return 1
+    fi
+    if [ "$waited" -ge "$STARTUP_TIMEOUT" ]; then
+      log "WARNING: no 'SERVER STARTED' after ${STARTUP_TIMEOUT}s, skipping post-start steps"
+      return 1
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  log "server started after ~${waited}s"
+}
+
+# WHITELIST is additive: every listed SteamID64 is sent as `addsteamid`, nothing is ever removed.
+apply_whitelist() {
+  [ -n "$WHITELIST" ] || return 0
+
+  local id sent=0 skipped=0
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    if [[ "$id" =~ ^[0-9]{17}$ ]]; then
+      send_console "addsteamid \"${id}\""
+      sent=$((sent + 1))
+      sleep 0.5
+    else
+      log "WHITELIST: skipping '${id}', expected a 17-digit SteamID64"
+      skipped=$((skipped + 1))
+    fi
+  done < <(printf '%s\n' "$WHITELIST" | tr ';,' '\n\n' | tr -d ' \t\r')
+
+  sleep 3
+  log "WHITELIST: sent addsteamid for ${sent} id(s), skipped ${skipped}"
+  grep -aoE 'SteamID [0-9]{17} .*' "$SCREEN_LOG" | tail -n "$sent" | sed 's/^/[whitelist] /' || true
 }
 
 graceful_stop() {
@@ -146,13 +216,23 @@ graceful_stop() {
 
 trap graceful_stop SIGTERM SIGINT
 
+if [ -z "$ADMIN_PASSWORD" ]; then
+  log "ERROR: ADMIN_PASSWORD is empty. Set it in the environment and restart."
+  sleep 30
+  exit 1
+fi
+
 update_server
 apply_memory_limit
 apply_ini_settings
-warn_if_whitelist_empty
+warn_if_locked_out
 start_server
 
-log "ready. Attach to the console with: docker exec -it <container> console"
+if wait_for_server_started; then
+  apply_whitelist
+fi
+
+log "ready. Console: docker exec -it <container> console   RCON: docker exec <container> rcon players"
 
 tail -n +1 -F "$SCREEN_LOG" &
 TAIL_PID=$!
