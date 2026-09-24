@@ -23,7 +23,7 @@ Use a **Git-based** resource with the **Dockerfile** build pack. Coolify clones 
 4. **Persistent Storage**: two volumes, mounted at `/home/pz/Zomboid` (world, config, database) and `/opt/pzserver` (game install).
 5. **Advanced**: stop grace period `120` seconds, memory limit `5g`, health check disabled (the game exposes no HTTP endpoint).
 6. **Environment Variables**: `WHITELIST_STEAMID`, `PZ_OPEN=false`, `PZ_RCON_PASSWORD`, `MEMORY=3g` as needed. Everything else has defaults; `ADMIN_PASSWORD` can stay empty.
-7. Deploy. The first deployment builds the image and then downloads ~7 GB from Steam, so give it time and watch the container logs, not just the build log. If you set any `PZ_*` variable, the container restarts itself once after that first boot to apply the `.ini` settings; Coolify may show it as restarting for a minute.
+7. Deploy. The first deployment builds the image and then downloads ~7 GB from Steam, so give it time and watch the container logs, not just the build log. If you set any `PZ_*` variable or `WHITELIST_STEAMID`, the container restarts itself once after that first boot to apply them; Coolify may show it as restarting for a minute.
 
 Notes for Coolify:
 
@@ -88,7 +88,9 @@ WHITELIST_STEAMID=76561198000000001 76561198000000002
 PZ_OPEN=false
 ```
 
-On every start the entrypoint waits for the server to finish booting and sends `addsteamid` for each entry. Players then join with **any username and password they like**; nothing has to be handed out.
+Before the game starts, the entrypoint inserts every listed id into the `allowedsteamid` table of the server database (`Zomboid/db/<SERVER_NAME>.db`), the same table the `addsteamid` console command writes to. Nothing goes through the console and the list is in force from the first second the server is up. Players then join with **any username and password they like**; nothing has to be handed out.
+
+The database is created by the game on its first boot, so on a first boot with `WHITELIST_STEAMID` set the entrypoint restarts the server once after it comes up; the second start applies the list before launching the game.
 
 **The variable is additive.** It never removes an id, so an entry deleted from `.env` stays allowed until you run `removesteamid "<steamid64>"` in the console or over RCON. This is deliberate: an environment variable that silently regenerated the list would wipe ids added by hand.
 
@@ -155,7 +157,7 @@ These map onto keys in `Zomboid/Server/<SERVER_NAME>.ini` and are applied on **e
 
 **Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written.
 
-The game creates the `.ini` during its first boot and only reads it at startup. When any of these variables is set on a first boot, the entrypoint waits for the file to appear, writes the values and restarts the server once (a clean `quit`, then the restart policy brings the container back), so they are in effect within about a minute. `WHITELIST_STEAMID` does not depend on the `.ini` and works from the first start.
+The game creates the `.ini` during its first boot and only reads it at startup. When any of these variables (or `WHITELIST_STEAMID`) is set on a first boot, the entrypoint lets the game create its files, then restarts the server once (a clean `quit`, then the restart policy brings the container back) and applies everything before the second launch, so they are in effect within about a minute.
 
 ## Ports
 

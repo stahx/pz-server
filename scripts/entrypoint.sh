@@ -183,27 +183,35 @@ wait_for_server_started() {
   log "server started after ~${waited}s"
 }
 
-# WHITELIST_STEAMID is additive: every listed SteamID64 is sent as `addsteamid`, nothing is ever removed.
+# WHITELIST_STEAMID is additive: every listed SteamID64 is inserted into the game's
+# allowedsteamid table before the server starts; nothing is ever removed.
 # Ids may be separated by spaces, semicolons or commas.
 apply_whitelist() {
   [ -n "$WHITELIST_STEAMID" ] || return 0
+  [ -s "$DB_FILE" ] || return 0
 
-  local id sent=0 skipped=0
+  if [ "$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='allowedsteamid';")" != "1" ]; then
+    log "WARNING: table allowedsteamid missing in ${DB_FILE}, whitelist not applied"
+    return 0
+  fi
+
+  local id added=0 present=0 skipped=0
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     if [[ "$id" =~ ^[0-9]{17}$ ]]; then
-      send_console "addsteamid \"${id}\""
-      sent=$((sent + 1))
-      sleep 0.5
+      if [ "$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM allowedsteamid WHERE steamid='${id}';")" = "0" ]; then
+        sqlite3 "$DB_FILE" "INSERT INTO allowedsteamid (steamid) VALUES ('${id}');"
+        added=$((added + 1))
+      else
+        present=$((present + 1))
+      fi
     else
       log "WHITELIST_STEAMID: skipping '${id}', expected a 17-digit SteamID64"
       skipped=$((skipped + 1))
     fi
   done < <(printf '%s\n' "$WHITELIST_STEAMID" | tr ';, \t' '\n\n\n\n' | tr -d '\r')
 
-  sleep 3
-  log "WHITELIST_STEAMID: sent addsteamid for ${sent} id(s), skipped ${skipped}"
-  grep -aoE 'SteamID [0-9]{17} .*' "$SCREEN_LOG" | tail -n "$sent" | sed 's/^/[whitelist] /' || true
+  log "WHITELIST_STEAMID: ${added} added, ${present} already present, ${skipped} skipped"
 }
 
 # Sends `quit` so the game saves the world, then waits up to STOP_TIMEOUT for it to exit.
@@ -245,22 +253,21 @@ apply_memory_limit
 FIRST_BOOT=false
 if [ -f "$INI_FILE" ]; then
   apply_ini_settings
+  apply_whitelist
 else
   FIRST_BOOT=true
-  log "${INI_FILE} not found: first boot, the game will create it"
+  log "${INI_FILE} not found: first boot, the game will create its config and database"
 fi
 
 warn_if_locked_out
 start_server
 
-if wait_for_server_started; then
-  apply_whitelist
-
-  # The game only reads its .ini at startup, so on a first boot the settings
-  # are written after the file appears and the server is restarted once.
-  if [ "$FIRST_BOOT" = true ] && has_ini_overrides && [ -f "$INI_FILE" ]; then
-    apply_ini_settings
-    log "first boot: restarting once so the .ini settings take effect"
+# The game creates the .ini and the database during its first boot and only reads
+# them at startup, so after a first boot the server is restarted once; the second
+# start then applies the .ini settings and the whitelist before launching the game.
+if wait_for_server_started && [ "$FIRST_BOOT" = true ]; then
+  if has_ini_overrides || [ -n "$WHITELIST_STEAMID" ]; then
+    log "first boot: restarting once so the .ini settings and the whitelist take effect"
     stop_server
     log "exiting for the restart policy to bring the container back"
     exit 0
