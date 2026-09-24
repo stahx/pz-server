@@ -15,7 +15,7 @@ The first start downloads roughly 7 GB from Steam and takes ten to twenty minute
 
 ## Deploying with Coolify
 
-Use a **Git-based** resource with the **Dockerfile** build pack. Coolify clones the repository, builds `Dockerfile` (the scripts are copied in during the build) and takes ports, volumes, limits and environment from its own settings. `compose.yaml` is not used by Coolify; it stays in the repository for running the server without a panel.
+Use a **Git-based** resource with the **Dockerfile** build pack. Coolify clones the repository, builds `Dockerfile` (the scripts are copied in during the build) and takes ports, volumes, limits and environment from its own settings. `docker-compose.yaml` is not used by Coolify; it stays in the repository for running the server without a panel.
 
 1. Project → **New Resource** → **Private Repository (with GitHub App)** → this repository, branch `main`.
 2. **Build Pack: Dockerfile**. Leave **Domains** empty; set **Ports Exposes** to `16261` (Coolify requires a value, it is only used for its proxy).
