@@ -115,7 +115,7 @@ apply_ini_settings() {
       printf '%s=%s\n' "$ini_key" "$value" >> "$INI_FILE"
     fi
 
-    if [ "$ini_key" = "RCONPassword" ]; then
+    if [ "$ini_key" = "RCONPassword" ] || [ "$ini_key" = "Password" ]; then
       log "ini: ${ini_key}=<set>"
     else
       log "ini: ${ini_key}=${value}"
