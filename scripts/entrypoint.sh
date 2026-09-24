@@ -31,6 +31,8 @@ INI_MAPPINGS=(
   "PZ_PAUSE_EMPTY:PauseEmpty"
   "PZ_RCON_PORT:RCONPort"
   "PZ_RCON_PASSWORD:RCONPassword"
+  "PZ_WORKSHOP_ITEMS:WorkshopItems"
+  "PZ_MODS:Mods"
 )
 
 log() {

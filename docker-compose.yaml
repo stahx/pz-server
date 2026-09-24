@@ -25,6 +25,8 @@ services:
       PZ_PAUSE_EMPTY: ${PZ_PAUSE_EMPTY:-}
       PZ_RCON_PORT: ${PZ_RCON_PORT:-27015}
       PZ_RCON_PASSWORD: ${PZ_RCON_PASSWORD:-}
+      PZ_WORKSHOP_ITEMS: ${PZ_WORKSHOP_ITEMS:-}
+      PZ_MODS: ${PZ_MODS:-}
     ports:
       - '${GAME_PORT:-16261}:16261/udp'
       - '${PLAYER_PORT:-16262}:16262/udp'

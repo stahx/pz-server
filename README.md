@@ -96,6 +96,19 @@ Two things to know:
 - `PZ_OPEN=false` with an empty allowed list and no accounts admits only `admin`. The entrypoint logs a warning at start when that is the case.
 - Username/password accounts are protected **only** by their password: the game does not reject a different Steam account logging into an existing username with the right credentials. Keep `WHITELIST_STEAMID` as the gate and treat account passwords as convenience.
 
+## Mods
+
+Steam Workshop mods are a server-side setting the game handles itself. Two `.ini` keys, both `;`-separated:
+
+```bash
+PZ_WORKSHOP_ITEMS=2875848298;2392709985   # Workshop item ids, from the item's page URL (?id=…)
+PZ_MODS=ModIdOne;ModIdTwo                  # mod ids from each mod's mod.info; order is load order
+```
+
+On start the server downloads the listed Workshop items into the install volume (`steamapps/workshop/content/108600/`). A player joining is prompted by the game to subscribe to the missing mods and Steam downloads them; nothing is handed out by hand. Mod updates are picked up on the next server start, so restart after Workshop updates.
+
+Use Build 42 versions of mods; a Build 41 mod id will not load. Map and overhaul mods raise memory use, so raise `MEMORY` (and `MEM_LIMIT`) when adding them. Mods that are not on the Workshop go into `Zomboid/mods/<name>/` on the data volume and are listed in `PZ_MODS` only.
+
 ## Updates
 
 **Every container start checks Steam for a new build** through SteamCMD, so `docker compose restart` doubles as an update. Files are re-downloaded only when Steam ships a new build; otherwise the check is quick and the install volume is left untouched.
@@ -151,6 +164,8 @@ These map onto keys in `Zomboid/Server/<SERVER_NAME>.ini` and are applied on **e
 | `PZ_PAUSE_EMPTY` | `PauseEmpty` |
 | `PZ_RCON_PORT` | `RCONPort` |
 | `PZ_RCON_PASSWORD` | `RCONPassword` |
+| `PZ_WORKSHOP_ITEMS` | `WorkshopItems` |
+| `PZ_MODS` | `Mods` |
 
 **Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written.
 
