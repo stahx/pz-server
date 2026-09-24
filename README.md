@@ -118,7 +118,7 @@ Copy `.env.example` to `.env` and adjust.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ADMIN_PASSWORD` | random | bootstrap `admin` account password; generated when empty, see below |
+| `ADMIN_PASSWORD` | random | bootstrap `admin` account password; generated when empty, see "Admin account" above |
 | `SERVER_NAME` | `pzserver` | server name and config file name |
 | `MEMORY` | `3g` | JVM heap; ~3g is a sensible floor for ~6 players |
 | `MEM_LIMIT` | `5g` | hard container RAM ceiling, keep above `MEMORY` |
