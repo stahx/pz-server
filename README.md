@@ -22,8 +22,8 @@ Use a **Git-based** resource with the **Dockerfile** build pack. Coolify clones 
 3. **Ports Mappings**: `16261:16261/udp, 16262:16262/udp, 127.0.0.1:27015:27015/tcp`
 4. **Persistent Storage**: two volumes, mounted at `/home/pz/Zomboid` (world, config, database) and `/opt/pzserver` (game install).
 5. **Advanced**: stop grace period `120` seconds, memory limit `5g`, health check disabled (the game exposes no HTTP endpoint).
-6. **Environment Variables**: `WHITELIST`, `PZ_OPEN=false`, `PZ_RCON_PASSWORD`, `MEMORY=3g` as needed. Everything else has defaults; `ADMIN_PASSWORD` can stay empty.
-7. Deploy. The first deployment builds the image and then downloads ~7 GB from Steam, so give it time and watch the container logs, not just the build log.
+6. **Environment Variables**: `WHITELIST_STEAMID`, `PZ_OPEN=false`, `PZ_RCON_PASSWORD`, `MEMORY=3g` as needed. Everything else has defaults; `ADMIN_PASSWORD` can stay empty.
+7. Deploy. The first deployment builds the image and then downloads ~7 GB from Steam, so give it time and watch the container logs, not just the build log. If you set any `PZ_*` variable, the container restarts itself once after that first boot to apply the `.ini` settings; Coolify may show it as restarting for a minute.
 
 Notes for Coolify:
 
@@ -84,7 +84,7 @@ Build 42 keeps a list of allowed SteamIDs (`allowedsteamid` table) alongside the
 Because the SteamID comes from Steam's authentication, not from something the player types, this is the whitelist to use:
 
 ```bash
-WHITELIST=76561198000000001;76561198000000002
+WHITELIST_STEAMID=76561198000000001 76561198000000002
 PZ_OPEN=false
 ```
 
@@ -95,7 +95,7 @@ On every start the entrypoint waits for the server to finish booting and sends `
 Two things to know:
 
 - `PZ_OPEN=false` with an empty allowed list and no accounts admits only `admin`. The entrypoint logs a warning at start when that is the case.
-- Username/password accounts are protected **only** by their password: the game does not reject a different Steam account logging into an existing username with the right credentials. Keep `WHITELIST` as the gate and treat account passwords as convenience.
+- Username/password accounts are protected **only** by their password: the game does not reject a different Steam account logging into an existing username with the right credentials. Keep `WHITELIST_STEAMID` as the gate and treat account passwords as convenience.
 
 ## Updates
 
@@ -125,7 +125,7 @@ Copy `.env.example` to `.env` and adjust.
 | `MEM_LIMIT` | `5g` | hard container RAM ceiling, keep above `MEMORY` |
 | `GAME_PORT` | `16261` | game port (UDP) |
 | `PLAYER_PORT` | `16262` | player port (UDP) |
-| `WHITELIST` | — | `;`-separated SteamID64 list, see above |
+| `WHITELIST_STEAMID` | — | space-separated SteamID64 list (`;` and `,` also accepted), see above |
 | `PZ_RCON_PORT` | `27015` | RCON port (TCP), written to the `.ini` |
 | `PZ_RCON_PASSWORD` | — | enables RCON when set |
 | `RCON_BIND` | `127.0.0.1` | host interface the RCON port is published on |
@@ -155,7 +155,7 @@ These map onto keys in `Zomboid/Server/<SERVER_NAME>.ini` and are applied on **e
 
 **Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written.
 
-The `.ini` is created by the game during the first boot, so these values (RCON included) take effect from the second start onwards. `WHITELIST` does not depend on the `.ini` and works from the first start.
+The game creates the `.ini` during its first boot and only reads it at startup. When any of these variables is set on a first boot, the entrypoint waits for the file to appear, writes the values and restarts the server once (a clean `quit`, then the restart policy brings the container back), so they are in effect within about a minute. `WHITELIST_STEAMID` does not depend on the `.ini` and works from the first start.
 
 ## Ports
 

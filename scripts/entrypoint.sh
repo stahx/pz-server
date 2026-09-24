@@ -15,11 +15,23 @@ STEAM_VALIDATE="${STEAM_VALIDATE:-false}"
 UPDATE_ATTEMPTS="${UPDATE_ATTEMPTS:-3}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-90}"
 STARTUP_TIMEOUT="${STARTUP_TIMEOUT:-300}"
-WHITELIST="${WHITELIST:-}"
+WHITELIST_STEAMID="${WHITELIST_STEAMID:-}"
 
 SCREEN_LOG="${ZOMBOID_DIR}/console-screen.log"
 INI_FILE="${ZOMBOID_DIR}/Server/${SERVER_NAME}.ini"
 DB_FILE="${ZOMBOID_DIR}/db/${SERVER_NAME}.db"
+
+# Each entry maps ENV_VAR:ini_key. An empty env var leaves the key untouched.
+INI_MAPPINGS=(
+  "PZ_OPEN:Open"
+  "PZ_PUBLIC:Public"
+  "PZ_PUBLIC_NAME:PublicName"
+  "PZ_SERVER_PASSWORD:Password"
+  "PZ_MAX_PLAYERS:MaxPlayers"
+  "PZ_PAUSE_EMPTY:PauseEmpty"
+  "PZ_RCON_PORT:RCONPort"
+  "PZ_RCON_PASSWORD:RCONPassword"
+)
 
 log() {
   echo "[entrypoint] $(date -u '+%Y-%m-%dT%H:%M:%SZ') $*"
@@ -76,26 +88,20 @@ sed_escape() {
   printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
 }
 
-apply_ini_settings() {
-  if [ ! -f "$INI_FILE" ]; then
-    log "${INI_FILE} not found; it is created on first boot, settings apply from the next start"
-    return 0
-  fi
+has_ini_overrides() {
+  local entry env_name
+  for entry in "${INI_MAPPINGS[@]}"; do
+    env_name="${entry%%:*}"
+    [ -n "${!env_name:-}" ] && return 0
+  done
+  return 1
+}
 
-  # Each entry maps ENV_VAR:ini_key. An empty env var leaves the key untouched.
-  local mappings=(
-    "PZ_OPEN:Open"
-    "PZ_PUBLIC:Public"
-    "PZ_PUBLIC_NAME:PublicName"
-    "PZ_SERVER_PASSWORD:Password"
-    "PZ_MAX_PLAYERS:MaxPlayers"
-    "PZ_PAUSE_EMPTY:PauseEmpty"
-    "PZ_RCON_PORT:RCONPort"
-    "PZ_RCON_PASSWORD:RCONPassword"
-  )
+apply_ini_settings() {
+  [ -f "$INI_FILE" ] || return 0
 
   local entry env_name ini_key value escaped
-  for entry in "${mappings[@]}"; do
+  for entry in "${INI_MAPPINGS[@]}"; do
     env_name="${entry%%:*}"
     ini_key="${entry##*:}"
     value="${!env_name:-}"
@@ -121,7 +127,7 @@ apply_ini_settings() {
 # Warn when none of the latter two exist, so a closed server does not lock everyone out.
 warn_if_locked_out() {
   [ "${PZ_OPEN:-}" = "false" ] || return 0
-  [ -z "$WHITELIST" ] || return 0
+  [ -z "$WHITELIST_STEAMID" ] || return 0
 
   local allowed=0 accounts=0
   if [ -s "$DB_FILE" ]; then
@@ -131,7 +137,7 @@ warn_if_locked_out() {
 
   if [ "$allowed" = "0" ] && [ "$accounts" = "0" ]; then
     log "WARNING: PZ_OPEN=false with no allowed SteamIDs and no player accounts: only 'admin' can join."
-    log "WARNING: set WHITELIST=<steamid64>;<steamid64> or run in the console: addsteamid \"<steamid64>\""
+    log "WARNING: set WHITELIST_STEAMID=\"<steamid64> <steamid64>\" or run in the console: addsteamid \"<steamid64>\""
   fi
 }
 
@@ -156,10 +162,14 @@ send_console() {
   screen -S "$SCREEN_NAME" -p 0 -X stuff "$1$(printf '\r')"
 }
 
+screen_alive() {
+  screen -list | grep -q "$SCREEN_NAME"
+}
+
 wait_for_server_started() {
   local waited=0
   while ! grep -aq 'SERVER STARTED' "$SCREEN_LOG"; do
-    if ! screen -list | grep -q "$SCREEN_NAME"; then
+    if ! screen_alive; then
       log "ERROR: server exited during startup"
       return 1
     fi
@@ -173,9 +183,10 @@ wait_for_server_started() {
   log "server started after ~${waited}s"
 }
 
-# WHITELIST is additive: every listed SteamID64 is sent as `addsteamid`, nothing is ever removed.
+# WHITELIST_STEAMID is additive: every listed SteamID64 is sent as `addsteamid`, nothing is ever removed.
+# Ids may be separated by spaces, semicolons or commas.
 apply_whitelist() {
-  [ -n "$WHITELIST" ] || return 0
+  [ -n "$WHITELIST_STEAMID" ] || return 0
 
   local id sent=0 skipped=0
   while IFS= read -r id; do
@@ -185,22 +196,22 @@ apply_whitelist() {
       sent=$((sent + 1))
       sleep 0.5
     else
-      log "WHITELIST: skipping '${id}', expected a 17-digit SteamID64"
+      log "WHITELIST_STEAMID: skipping '${id}', expected a 17-digit SteamID64"
       skipped=$((skipped + 1))
     fi
-  done < <(printf '%s\n' "$WHITELIST" | tr ';,' '\n\n' | tr -d ' \t\r')
+  done < <(printf '%s\n' "$WHITELIST_STEAMID" | tr ';, \t' '\n\n\n\n' | tr -d '\r')
 
   sleep 3
-  log "WHITELIST: sent addsteamid for ${sent} id(s), skipped ${skipped}"
+  log "WHITELIST_STEAMID: sent addsteamid for ${sent} id(s), skipped ${skipped}"
   grep -aoE 'SteamID [0-9]{17} .*' "$SCREEN_LOG" | tail -n "$sent" | sed 's/^/[whitelist] /' || true
 }
 
-graceful_stop() {
-  log "SIGTERM received, sending 'quit' to the console so the world is saved"
+# Sends `quit` so the game saves the world, then waits up to STOP_TIMEOUT for it to exit.
+stop_server() {
   send_console "quit"
 
   local waited=0
-  while screen -list | grep -q "$SCREEN_NAME"; do
+  while screen_alive; do
     if [ "$waited" -ge "$STOP_TIMEOUT" ]; then
       log "timed out after ${STOP_TIMEOUT}s, killing the session"
       screen -S "$SCREEN_NAME" -X quit || true
@@ -211,6 +222,11 @@ graceful_stop() {
   done
 
   log "server stopped after ${waited}s"
+}
+
+graceful_stop() {
+  log "SIGTERM received, sending 'quit' to the console so the world is saved"
+  stop_server
   exit 0
 }
 
@@ -225,12 +241,30 @@ fi
 
 update_server
 apply_memory_limit
-apply_ini_settings
+
+FIRST_BOOT=false
+if [ -f "$INI_FILE" ]; then
+  apply_ini_settings
+else
+  FIRST_BOOT=true
+  log "${INI_FILE} not found: first boot, the game will create it"
+fi
+
 warn_if_locked_out
 start_server
 
 if wait_for_server_started; then
   apply_whitelist
+
+  # The game only reads its .ini at startup, so on a first boot the settings
+  # are written after the file appears and the server is restarted once.
+  if [ "$FIRST_BOOT" = true ] && has_ini_overrides && [ -f "$INI_FILE" ]; then
+    apply_ini_settings
+    log "first boot: restarting once so the .ini settings take effect"
+    stop_server
+    log "exiting for the restart policy to bring the container back"
+    exit 0
+  fi
 fi
 
 log "ready. Console: docker exec -it <container> console   RCON: docker exec <container> rcon players"
@@ -238,7 +272,7 @@ log "ready. Console: docker exec -it <container> console   RCON: docker exec <co
 tail -n +1 -F "$SCREEN_LOG" &
 TAIL_PID=$!
 
-while screen -list | grep -q "$SCREEN_NAME"; do
+while screen_alive; do
   sleep 5 &
   wait $! || true
 done
