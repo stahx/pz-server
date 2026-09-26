@@ -15,6 +15,8 @@ STEAM_VALIDATE="${STEAM_VALIDATE:-false}"
 UPDATE_ATTEMPTS="${UPDATE_ATTEMPTS:-3}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-90}"
 STARTUP_TIMEOUT="${STARTUP_TIMEOUT:-300}"
+UPDATE_CHECK_INTERVAL="${UPDATE_CHECK_INTERVAL:-0}"
+UPDATE_ANNOUNCE_SECONDS="${UPDATE_ANNOUNCE_SECONDS:-60}"
 WHITELIST_STEAMID="${WHITELIST_STEAMID:-}"
 
 SCREEN_LOG="${ZOMBOID_DIR}/console-screen.log"
@@ -75,6 +77,49 @@ update_server() {
 
   log "ERROR: update failed after ${UPDATE_ATTEMPTS} attempts"
   return 1
+}
+
+installed_buildid() {
+  awk -F'"' '/"buildid"/ {print $4; exit}' \
+    "${SERVER_DIR}/steamapps/appmanifest_${STEAM_APP_ID}.acf" 2>/dev/null
+}
+
+# Build id of the public branch on Steam; read-only, does not touch the install.
+latest_buildid() {
+  "${STEAMCMD_DIR}/steamcmd.sh" \
+    +login anonymous \
+    +app_info_update 1 \
+    +app_info_print "$STEAM_APP_ID" \
+    +quit 2>/dev/null \
+    | tr -d '\r' \
+    | awk '/"public"/ {found=1} found && /"buildid"/ {gsub(/"/, "", $2); print $2; exit}'
+}
+
+# Polls Steam and, when a new build appears, asks the game to quit. The main loop
+# then exits, the restart policy brings the container back and the start-up update
+# installs the new build.
+update_watcher() {
+  local installed latest
+  while true; do
+    sleep "$UPDATE_CHECK_INTERVAL"
+    screen_alive || return 0
+
+    installed="$(installed_buildid)"
+    latest="$(latest_buildid)"
+    [ -n "$installed" ] && [ -n "$latest" ] || continue
+    [ "$installed" != "$latest" ] || continue
+
+    log "update available: build ${installed} -> ${latest}"
+    if [ "$UPDATE_ANNOUNCE_SECONDS" -gt 0 ]; then
+      send_console "servermsg \"Server update available, restarting in ${UPDATE_ANNOUNCE_SECONDS} seconds\""
+      sleep "$UPDATE_ANNOUNCE_SECONDS"
+      screen_alive || return 0
+    fi
+
+    log "restarting to install build ${latest}"
+    send_console "quit"
+    return 0
+  done
 }
 
 apply_memory_limit() {
@@ -236,6 +281,7 @@ stop_server() {
 
 graceful_stop() {
   log "SIGTERM received, sending 'quit' to the console so the world is saved"
+  kill "${WATCHER_PID:-}" 2>/dev/null || true
   stop_server
   exit 0
 }
@@ -278,6 +324,13 @@ fi
 
 log "ready. Console: docker exec -it <container> console   RCON: docker exec <container> rcon players"
 
+WATCHER_PID=""
+if [ "$UPDATE_CHECK_INTERVAL" -gt 0 ]; then
+  update_watcher &
+  WATCHER_PID=$!
+  log "update watcher: checking Steam every ${UPDATE_CHECK_INTERVAL}s"
+fi
+
 tail -n +1 -F "$SCREEN_LOG" &
 TAIL_PID=$!
 
@@ -287,5 +340,5 @@ while screen_alive; do
 done
 
 log "screen session disappeared, exiting so the restart policy can bring the container back"
-kill "$TAIL_PID" 2>/dev/null || true
+kill "$TAIL_PID" "$WATCHER_PID" 2>/dev/null || true
 exit 1

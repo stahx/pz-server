@@ -119,6 +119,14 @@ The update step retries (`UPDATE_ATTEMPTS`, default 3). SteamCMD routinely fails
 
 `SKIP_UPDATE=true` skips the step entirely, for example during a Steam outage.
 
+### Updating while the server runs
+
+Nothing restarts the container on its own, so a server left running keeps its build until something restarts it. That matters here: Steam updates players' clients automatically and Project Zomboid refuses a client whose version differs from the server's, so a stale server locks everyone out.
+
+Set `UPDATE_CHECK_INTERVAL` to a number of seconds (3600 is a sensible hourly check) and the entrypoint polls Steam for the public branch's build id while the game runs. When it changes, the server announces the restart in game, waits `UPDATE_ANNOUNCE_SECONDS`, then quits cleanly; the restart policy brings the container back and the usual start-up update installs the new build. Players are disconnected for the length of one restart, a minute or two.
+
+The check is read-only (`app_info_print`) and never touches the install, so it is safe to run alongside the game. Leave `UPDATE_CHECK_INTERVAL=0` to disable it and update by restarting the container yourself.
+
 ## Stopping and world saves
 
 `docker compose stop` sends `SIGTERM`. The entrypoint traps it and types `quit` into the console so the game saves the world instead of being killed mid-write, then waits up to `STOP_TIMEOUT` seconds before killing the session.
@@ -144,6 +152,8 @@ Copy `.env.example` to `.env` and adjust.
 | `SKIP_UPDATE` | `false` | skip the Steam update on start |
 | `STEAM_VALIDATE` | `false` | re-verify all files on start |
 | `UPDATE_ATTEMPTS` | `3` | SteamCMD retries |
+| `UPDATE_CHECK_INTERVAL` | `0` | seconds between Steam build checks while running; 0 disables |
+| `UPDATE_ANNOUNCE_SECONDS` | `60` | in-game warning before an update restart |
 | `STOP_TIMEOUT` | `90` | seconds to wait for the world to save |
 | `STARTUP_TIMEOUT` | `300` | seconds to wait for `SERVER STARTED` on a first boot before skipping the one-time restart |
 | `TZ` | `UTC` | container time zone |
