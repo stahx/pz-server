@@ -1,6 +1,6 @@
 # pz-server
 
-A containerised [Project Zomboid](https://projectzomboid.com/) dedicated server (Build 42) that keeps the game process inside a **`screen`** session, so you get a real interactive server console through the container's terminal — over SSH or from a web panel such as Coolify or Portainer. RCON is available on top for remote administration.
+A containerised [Project Zomboid](https://projectzomboid.com/) dedicated server that keeps the game process inside a **`screen`** session, so you get a real interactive server console through the container's terminal — over SSH or from a web panel such as Coolify or Portainer. RCON is available on top for remote administration.
 
 Most container images run the server as PID 1, which means `docker exec` drops you into a fresh shell with no way to talk to the game. Running the server inside `screen` bridges that gap.
 
@@ -76,7 +76,7 @@ Roles, from the game's database: `admin`, `moderator`, `gm`, `observer`, `priori
 
 ## Whitelist by SteamID
 
-Build 42 keeps a list of allowed SteamIDs (`allowedsteamid` table) alongside the classic username/password accounts. With `Open=false` the server admits a connection when **any** of these holds: it is the admin account, the connecting SteamID is on the allowed list, or the username already exists. A listed SteamID joining with a new username gets an account created automatically and bound to that Steam account.
+The game keeps a list of allowed SteamIDs (`allowedsteamid` table) alongside the classic username/password accounts. With `Open=false` the server admits a connection when **any** of these holds: it is the admin account, the connecting SteamID is on the allowed list, or the username already exists. A listed SteamID joining with a new username gets an account created automatically and bound to that Steam account.
 
 Because the SteamID comes from Steam's authentication, not from something the player types, this is the whitelist to use:
 
@@ -107,7 +107,7 @@ PZ_MODS=ModIdOne;ModIdTwo                  # mod ids from each mod's mod.info; o
 
 On start the server downloads the listed Workshop items into the install volume (`steamapps/workshop/content/108600/`). A player joining is prompted by the game to subscribe to the missing mods and Steam downloads them; nothing is handed out by hand. Mod updates are picked up on the next server start, so restart after Workshop updates.
 
-Use Build 42 versions of mods; a Build 41 mod id will not load. Map and overhaul mods raise memory use, so raise `MEMORY` (and `MEM_LIMIT`) when adding them. Mods that are not on the Workshop go into `Zomboid/mods/<name>/` on the data volume and are listed in `PZ_MODS` only.
+Pick mod versions that match the build your server runs, and mind that a mod's id can differ between builds. Map and overhaul mods raise memory use, so raise `MEMORY` (and `MEM_LIMIT`) when adding them. Mods that are not on the Workshop go into `Zomboid/mods/<name>/` on the data volume and are listed in `PZ_MODS` only.
 
 ## Updates
 
@@ -119,11 +119,25 @@ The update step retries (`UPDATE_ATTEMPTS`, default 3). SteamCMD routinely fails
 
 `SKIP_UPDATE=true` skips the step entirely, for example during a Steam outage.
 
+### Choosing a build
+
+`STEAM_BRANCH` selects which Steam branch is installed and tracked; it defaults to `public`, the current release. Set it to stay on a beta branch or to pin the server to an older build the game still publishes. List what is on offer with:
+
+```bash
+docker exec <container> /opt/steamcmd/steamcmd.sh +login anonymous +app_info_print 380870 +quit
+```
+
+Switching the branch changes the build on the next start, so the world and the mods must suit it; moving between major builds is a migration, not a setting. To see what is running now, check the version the server logs at boot:
+
+```bash
+docker exec <container> grep -m1 -aoE 'version=[0-9.]+' /home/pz/Zomboid/console-screen.log
+```
+
 ### Updating while the server runs
 
 Nothing restarts the container on its own, so a server left running keeps its build until something restarts it. That matters here: Steam updates players' clients automatically and Project Zomboid refuses a client whose version differs from the server's, so a stale server locks everyone out.
 
-Set `UPDATE_CHECK_INTERVAL` to a number of seconds (3600 is a sensible hourly check) and the entrypoint polls Steam for the public branch's build id while the game runs. When it changes, the server announces the restart in game, waits `UPDATE_ANNOUNCE_SECONDS`, then quits cleanly; the restart policy brings the container back and the usual start-up update installs the new build. Players are disconnected for the length of one restart, a minute or two.
+Every `UPDATE_CHECK_INTERVAL` seconds (hourly by default) the entrypoint polls Steam for the build id of the branch it tracks. When it changes, the server announces the restart in game, waits `UPDATE_ANNOUNCE_SECONDS`, then quits cleanly; the restart policy brings the container back and the usual start-up update installs the new build. Players are disconnected for the length of one restart, a minute or two.
 
 The check is read-only (`app_info_print`) and never touches the install, so it is safe to run alongside the game. Leave `UPDATE_CHECK_INTERVAL=0` to disable it and update by restarting the container yourself.
 
@@ -149,10 +163,11 @@ Copy `.env.example` to `.env` and adjust.
 | `PZ_RCON_PORT` | `27015` | RCON port (TCP), written to the `.ini` |
 | `PZ_RCON_PASSWORD` | — | enables RCON when set |
 | `RCON_BIND` | `127.0.0.1` | host interface the RCON port is published on |
+| `STEAM_BRANCH` | `public` | Steam branch to install and track |
 | `SKIP_UPDATE` | `false` | skip the Steam update on start |
 | `STEAM_VALIDATE` | `false` | re-verify all files on start |
 | `UPDATE_ATTEMPTS` | `3` | SteamCMD retries |
-| `UPDATE_CHECK_INTERVAL` | `0` | seconds between Steam build checks while running; 0 disables |
+| `UPDATE_CHECK_INTERVAL` | `3600` | seconds between Steam build checks while running; 0 disables |
 | `UPDATE_ANNOUNCE_SECONDS` | `60` | in-game warning before an update restart |
 | `STOP_TIMEOUT` | `90` | seconds to wait for the world to save |
 | `STARTUP_TIMEOUT` | `300` | seconds to wait for `SERVER STARTED` on a first boot before skipping the one-time restart |

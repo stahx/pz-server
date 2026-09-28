@@ -6,6 +6,7 @@ STEAMCMD_DIR="${STEAMCMD_DIR:-/opt/steamcmd}"
 SERVER_DIR="${SERVER_DIR:-/opt/pzserver}"
 ZOMBOID_DIR="${ZOMBOID_DIR:-/home/pz/Zomboid}"
 STEAM_APP_ID="${STEAM_APP_ID:-380870}"
+STEAM_BRANCH="${STEAM_BRANCH:-public}"
 
 SERVER_NAME="${SERVER_NAME:-pzserver}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
@@ -15,7 +16,7 @@ STEAM_VALIDATE="${STEAM_VALIDATE:-false}"
 UPDATE_ATTEMPTS="${UPDATE_ATTEMPTS:-3}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-90}"
 STARTUP_TIMEOUT="${STARTUP_TIMEOUT:-300}"
-UPDATE_CHECK_INTERVAL="${UPDATE_CHECK_INTERVAL:-0}"
+UPDATE_CHECK_INTERVAL="${UPDATE_CHECK_INTERVAL:-3600}"
 UPDATE_ANNOUNCE_SECONDS="${UPDATE_ANNOUNCE_SECONDS:-60}"
 WHITELIST_STEAMID="${WHITELIST_STEAMID:-}"
 
@@ -53,6 +54,12 @@ update_server() {
     log "STEAM_VALIDATE=true, steamcmd will re-verify every file (slow)"
   fi
 
+  local branch_args=()
+  if [ "$STEAM_BRANCH" != "public" ]; then
+    branch_args=(-beta "$STEAM_BRANCH")
+    log "using Steam branch '${STEAM_BRANCH}'"
+  fi
+
   local attempt=1
   while [ "$attempt" -le "$UPDATE_ATTEMPTS" ]; do
     log "updating server (app ${STEAM_APP_ID}), attempt ${attempt}/${UPDATE_ATTEMPTS}"
@@ -61,7 +68,7 @@ update_server() {
     "${STEAMCMD_DIR}/steamcmd.sh" \
       +force_install_dir "$SERVER_DIR" \
       +login anonymous \
-      +app_update "$STEAM_APP_ID" $validate_arg \
+      +app_update "$STEAM_APP_ID" "${branch_args[@]}" $validate_arg \
       +quit || true
 
     # steamcmd exit codes are unreliable, so check for the actual artifact.
@@ -84,7 +91,7 @@ installed_buildid() {
     "${SERVER_DIR}/steamapps/appmanifest_${STEAM_APP_ID}.acf" 2>/dev/null
 }
 
-# Build id of the public branch on Steam; read-only, does not touch the install.
+# Build id of the configured branch on Steam; read-only, does not touch the install.
 latest_buildid() {
   "${STEAMCMD_DIR}/steamcmd.sh" \
     +login anonymous \
@@ -92,7 +99,10 @@ latest_buildid() {
     +app_info_print "$STEAM_APP_ID" \
     +quit 2>/dev/null \
     | tr -d '\r' \
-    | awk '/"public"/ {found=1} found && /"buildid"/ {gsub(/"/, "", $2); print $2; exit}'
+    | awk -v branch="$STEAM_BRANCH" '
+        /"branches"/ { in_branches = 1 }
+        in_branches && $0 ~ "^[[:space:]]*\"" branch "\"[[:space:]]*$" { found = 1 }
+        found && /"buildid"/ { gsub(/"/, "", $2); print $2; exit }'
 }
 
 # Polls Steam and, when a new build appears, asks the game to quit. The main loop
