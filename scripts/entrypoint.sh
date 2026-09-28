@@ -65,9 +65,12 @@ update_server() {
     log "updating server (app ${STEAM_APP_ID}), attempt ${attempt}/${UPDATE_ATTEMPTS}"
 
     # shellcheck disable=SC2086
+    # app_info_update refreshes the cached app info; without it steamcmd trusts a
+    # stale cache and reports "already up to date" while a new build is out.
     "${STEAMCMD_DIR}/steamcmd.sh" \
       +force_install_dir "$SERVER_DIR" \
       +login anonymous \
+      +app_info_update 1 \
       +app_update "$STEAM_APP_ID" "${branch_args[@]}" $validate_arg \
       +quit || true
 
