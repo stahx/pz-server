@@ -44,8 +44,18 @@ log() {
 
 update_server() {
   if [ "$SKIP_UPDATE" = "true" ]; then
+    if [ "${STEAM_REINSTALL:-false}" = "true" ]; then
+      log "WARNING: STEAM_REINSTALL needs an update to run, but SKIP_UPDATE=true; not wiping anything"
+    fi
     log "SKIP_UPDATE=true, skipping update"
     return 0
+  fi
+
+  # Escape hatch: Steam can wedge an install in a state no update or validate clears.
+  # Deleting only the manifest is not enough, it leaves files the new build dropped.
+  if [ "${STEAM_REINSTALL:-false}" = "true" ]; then
+    log "STEAM_REINSTALL=true: wiping ${SERVER_DIR} for a clean download"
+    rm -rf "${SERVER_DIR:?}"/* "${SERVER_DIR:?}"/.[!.]* 2>/dev/null || true
   fi
 
   local validate_arg=""

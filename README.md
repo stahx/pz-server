@@ -117,6 +117,8 @@ Pick mod versions that match the build your server runs, and mind that a mod's i
 
 `STEAM_VALIDATE=true` makes SteamCMD re-hash all ~7 GB on every start. Use it to repair a corrupted install, not as a default.
 
+`STEAM_REINSTALL=true` goes further and deletes the install before downloading it again. Steam can leave an app in a state that neither an update nor a validate clears, and the symptom reaches players as missing files or checksum kicks rather than anything obvious on the server. Trying one start with this set is worth it when the server looks current but clients disagree. Set it back to `false` afterwards, or every start re-downloads ~7 GB. The world is on the other volume and is not touched.
+
 The update step retries (`UPDATE_ATTEMPTS`, default 3). SteamCMD routinely fails its first invocation in a fresh container because it updates itself first; without a retry the container would fall into a restart loop.
 
 `SKIP_UPDATE=true` skips the step entirely, for example during a Steam outage.
@@ -170,6 +172,7 @@ Copy `.env.example` to `.env` and adjust.
 | `STEAM_BRANCH` | `public` | Steam branch to install and track |
 | `SKIP_UPDATE` | `false` | never update: no start-up update, no watcher |
 | `STEAM_VALIDATE` | `false` | re-verify all files on start |
+| `STEAM_REINSTALL` | `false` | emergency: delete and re-download the install |
 | `UPDATE_ATTEMPTS` | `3` | SteamCMD retries |
 | `UPDATE_CHECK_INTERVAL` | `3600` | seconds between Steam build checks while running; 0 disables |
 | `UPDATE_ANNOUNCE_SECONDS` | `60` | in-game warning before an update restart |
