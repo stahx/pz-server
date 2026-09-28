@@ -60,32 +60,43 @@ update_server() {
     log "using Steam branch '${STEAM_BRANCH}'"
   fi
 
-  local attempt=1
+  # A fresh container makes steamcmd update itself first, and the app command in
+  # that same run fails with "Missing configuration"; this gets it out of the way.
+  "${STEAMCMD_DIR}/steamcmd.sh" +quit >/dev/null 2>&1 || true
+
+  local attempt=1 output
   while [ "$attempt" -le "$UPDATE_ATTEMPTS" ]; do
     log "updating server (app ${STEAM_APP_ID}), attempt ${attempt}/${UPDATE_ATTEMPTS}"
 
     # shellcheck disable=SC2086
     # app_info_update refreshes the cached app info; without it steamcmd trusts a
     # stale cache and reports "already up to date" while a new build is out.
-    "${STEAMCMD_DIR}/steamcmd.sh" \
+    output="$("${STEAMCMD_DIR}/steamcmd.sh" \
       +force_install_dir "$SERVER_DIR" \
       +login anonymous \
       +app_info_update 1 \
       +app_update "$STEAM_APP_ID" "${branch_args[@]}" $validate_arg \
-      +quit || true
+      +quit 2>&1 || true)"
+    printf '%s\n' "$output"
 
-    # steamcmd exit codes are unreliable, so check for the actual artifact.
-    if [ -x "${SERVER_DIR}/start-server.sh" ]; then
+    # Only steamcmd's own success line proves the build was installed. start-server.sh
+    # survives a failed update, so its presence would report stale installs as fresh.
+    if printf '%s' "$output" | grep -q "Success! App '${STEAM_APP_ID}'"; then
       log "update complete"
       return 0
     fi
 
-    log "steamcmd did not produce start-server.sh, retrying in 10s"
+    log "steamcmd did not report success, retrying in 10s"
     attempt=$((attempt + 1))
     sleep 10
   done
 
-  log "ERROR: update failed after ${UPDATE_ATTEMPTS} attempts"
+  if [ -x "${SERVER_DIR}/start-server.sh" ]; then
+    log "WARNING: update failed after ${UPDATE_ATTEMPTS} attempts, starting the build already installed"
+    return 0
+  fi
+
+  log "ERROR: update failed after ${UPDATE_ATTEMPTS} attempts and no build is installed"
   return 1
 }
 
