@@ -194,7 +194,7 @@ These map onto keys in `Zomboid/Server/<SERVER_NAME>.ini` and are applied on **e
 | `PZ_WORKSHOP_ITEMS` | `WorkshopItems` |
 | `PZ_MODS` | `Mods` |
 
-**Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written.
+**Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. **Set it to a single dash (`-`) to write the key empty** — clearing a variable does not clear the key, so this is how you remove mods or drop a server password. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written.
 
 The game creates the `.ini` during its first boot and only reads it at startup. When any of these variables (or `WHITELIST_STEAMID`) is set on a first boot, the entrypoint lets the game create its files, then restarts the server once (a clean `quit`, then the restart policy brings the container back) and applies everything before the second launch, so they are in effect within about a minute.
 

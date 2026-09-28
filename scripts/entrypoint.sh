@@ -178,6 +178,9 @@ apply_ini_settings() {
     value="${!env_name:-}"
 
     [ -z "$value" ] && continue
+    # A single dash means "write this key empty"; an unset variable leaves it alone,
+    # so without it a key could be set from the environment but never cleared.
+    [ "$value" = "-" ] && value=""
 
     escaped="$(sed_escape "$value")"
     if grep -q "^${ini_key}=" "$INI_FILE"; then
