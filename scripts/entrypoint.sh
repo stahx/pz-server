@@ -177,10 +177,16 @@ apply_ini_settings() {
     ini_key="${entry##*:}"
     value="${!env_name:-}"
 
-    [ -z "$value" ] && continue
-    # A single dash means "write this key empty"; an unset variable leaves it alone,
-    # so without it a key could be set from the environment but never cleared.
-    [ "$value" = "-" ] && value=""
+    # Mod keys are declarative: whatever the environment says is what the server gets,
+    # so clearing the variable removes the mods. For the rest an empty variable leaves
+    # the key alone (hand edits survive) and a single dash writes it empty.
+    case "$ini_key" in
+      Mods|WorkshopItems) : ;;
+      *)
+        [ -z "$value" ] && continue
+        [ "$value" = "-" ] && value=""
+        ;;
+    esac
 
     escaped="$(sed_escape "$value")"
     if grep -q "^${ini_key}=" "$INI_FILE"; then
@@ -195,6 +201,27 @@ apply_ini_settings() {
       log "ini: ${ini_key}=${value}"
     fi
   done
+}
+
+# Workshop content on disk must match PZ_WORKSHOP_ITEMS: anything not listed is removed
+# and the server re-downloads what it needs, so leftovers cannot linger between deploys.
+prune_workshop() {
+  local dir="${SERVER_DIR}/steamapps/workshop/content/108600"
+  [ -d "$dir" ] || return 0
+
+  local wanted=";$(printf '%s' "${PZ_WORKSHOP_ITEMS:-}" | tr -d ' \t' | tr ',' ';');"
+  local path id removed=0
+  for path in "$dir"/*; do
+    [ -d "$path" ] || continue
+    id="$(basename "$path")"
+    case "$wanted" in
+      *";${id};"*) continue ;;
+    esac
+    rm -rf "$path"
+    removed=$((removed + 1))
+    log "workshop: removed ${id}, not listed in PZ_WORKSHOP_ITEMS"
+  done
+  [ "$removed" -eq 0 ] || log "workshop: ${removed} unlisted item(s) removed"
 }
 
 # With Open=false only the admin, listed SteamIDs and existing accounts can join.
@@ -335,6 +362,7 @@ else
 fi
 
 warn_if_locked_out
+prune_workshop
 start_server
 
 # The game creates the .ini and the database during its first boot and only reads

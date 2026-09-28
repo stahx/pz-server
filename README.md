@@ -105,7 +105,9 @@ PZ_WORKSHOP_ITEMS=2875848298;2392709985   # Workshop item ids, from the item's p
 PZ_MODS=ModIdOne;ModIdTwo                  # mod ids from each mod's mod.info; order is load order
 ```
 
-On start the server downloads the listed Workshop items into the install volume (`steamapps/workshop/content/108600/`). A player joining is prompted by the game to subscribe to the missing mods and Steam downloads them; nothing is handed out by hand. Mod updates are picked up on the next server start, so restart after Workshop updates.
+`PZ_WORKSHOP_ITEMS` and `PZ_MODS` are declarative: the server runs exactly what they list and nothing else. Clear them and the mods are gone, including their files, because anything not listed is deleted from `steamapps/workshop/content/108600/` before the game starts and the server re-downloads only what it needs. Unlike the other `.ini` variables, these two do not need the dash to be cleared.
+
+On start the server downloads the listed Workshop items into the install volume. A player joining is prompted by the game to subscribe to the missing mods and Steam downloads them; nothing is handed out by hand. Mod updates are picked up on the next server start, so restart after Workshop updates.
 
 Pick mod versions that match the build your server runs, and mind that a mod's id can differ between builds. Map and overhaul mods raise memory use, so raise `MEMORY` (and `MEM_LIMIT`) when adding them. Mods that are not on the Workshop go into `Zomboid/mods/<name>/` on the data volume and are listed in `PZ_MODS` only.
 
@@ -194,7 +196,7 @@ These map onto keys in `Zomboid/Server/<SERVER_NAME>.ini` and are applied on **e
 | `PZ_WORKSHOP_ITEMS` | `WorkshopItems` |
 | `PZ_MODS` | `Mods` |
 
-**Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. **Set it to a single dash (`-`) to write the key empty** — clearing a variable does not clear the key, so this is how you remove mods or drop a server password. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written.
+**Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. **Set it to a single dash (`-`) to write the key empty** — for these keys clearing a variable does not clear the key, so this is how you drop a server password or a public name. `PZ_MODS` and `PZ_WORKSHOP_ITEMS` are the exception and always follow the environment. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written.
 
 The game creates the `.ini` during its first boot and only reads it at startup. When any of these variables (or `WHITELIST_STEAMID`) is set on a first boot, the entrypoint lets the game create its files, then restarts the server once (a clean `quit`, then the restart policy brings the container back) and applies everything before the second launch, so they are in effect within about a minute.
 
