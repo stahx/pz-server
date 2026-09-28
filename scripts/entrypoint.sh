@@ -335,7 +335,10 @@ fi
 log "ready. Console: docker exec -it <container> console   RCON: docker exec <container> rcon players"
 
 WATCHER_PID=""
-if [ "$UPDATE_CHECK_INTERVAL" -gt 0 ]; then
+if [ "$SKIP_UPDATE" = "true" ]; then
+  # Restarting would not change the build, so the watcher would loop forever.
+  log "update watcher: off, SKIP_UPDATE=true pins the server to its current build"
+elif [ "$UPDATE_CHECK_INTERVAL" -gt 0 ]; then
   update_watcher &
   WATCHER_PID=$!
   log "update watcher: checking Steam every ${UPDATE_CHECK_INTERVAL}s"

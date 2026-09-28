@@ -119,6 +119,8 @@ The update step retries (`UPDATE_ATTEMPTS`, default 3). SteamCMD routinely fails
 
 `SKIP_UPDATE=true` skips the step entirely, for example during a Steam outage.
 
+It also turns the update watcher below off, so the pair freezes the server on whatever build it already has: nothing downloads and nothing restarts it. That is the way to stay on a known build, because a Steam branch is not a fixed version and moves whenever the game ships a patch for it.
+
 ### Choosing a build
 
 `STEAM_BRANCH` selects which Steam branch is installed and tracked; it defaults to `public`, the current release. Set it to stay on a beta branch or to pin the server to an older build the game still publishes. List what is on offer with:
@@ -139,7 +141,7 @@ Nothing restarts the container on its own, so a server left running keeps its bu
 
 Every `UPDATE_CHECK_INTERVAL` seconds (hourly by default) the entrypoint polls Steam for the build id of the branch it tracks. When it changes, the server announces the restart in game, waits `UPDATE_ANNOUNCE_SECONDS`, then quits cleanly; the restart policy brings the container back and the usual start-up update installs the new build. Players are disconnected for the length of one restart, a minute or two.
 
-The check is read-only (`app_info_print`) and never touches the install, so it is safe to run alongside the game. Leave `UPDATE_CHECK_INTERVAL=0` to disable it and update by restarting the container yourself.
+The check is read-only (`app_info_print`) and never touches the install, so it is safe to run alongside the game. Set `UPDATE_CHECK_INTERVAL=0` to keep updating on restart but never automatically, or `SKIP_UPDATE=true` to stop updating altogether.
 
 ## Stopping and world saves
 
@@ -164,7 +166,7 @@ Copy `.env.example` to `.env` and adjust.
 | `PZ_RCON_PASSWORD` | — | enables RCON when set |
 | `RCON_BIND` | `127.0.0.1` | host interface the RCON port is published on |
 | `STEAM_BRANCH` | `public` | Steam branch to install and track |
-| `SKIP_UPDATE` | `false` | skip the Steam update on start |
+| `SKIP_UPDATE` | `false` | never update: no start-up update, no watcher |
 | `STEAM_VALIDATE` | `false` | re-verify all files on start |
 | `UPDATE_ATTEMPTS` | `3` | SteamCMD retries |
 | `UPDATE_CHECK_INTERVAL` | `3600` | seconds between Steam build checks while running; 0 disables |
