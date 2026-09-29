@@ -9,6 +9,7 @@ Most container images run the server as PID 1, which means `docker exec` drops y
 ```bash
 cp .env.example .env     # everything has a default; edit what you need
 docker compose up -d
+docker compose logs -f   # watch the download and the boot
 ```
 
 The first start downloads roughly 7 GB from Steam and takes ten to twenty minutes depending on bandwidth. A restart typically takes one to three minutes: a quick Steam build check (files are only re-downloaded when Steam ships a new build) followed by the game's own boot.
@@ -17,16 +18,16 @@ The first start downloads roughly 7 GB from Steam and takes ten to twenty minute
 
 Use a **Git-based** resource with the **Docker Compose** build pack: Coolify clones the repository, builds the image from `Dockerfile` and takes ports, volumes, memory limit and `stop_grace_period` straight from `docker-compose.yaml`. The UDP ports are published, RCON stays bound to `127.0.0.1` and the 120 s stop grace period is kept.
 
-1. Project → **New Resource** → **Private Repository (with GitHub App)** → this repository, branch `main`.
+1. Project → **New Resource** → **Public Repository** with this repository's URL, branch `main`. For your own fork, pick **Private Repository (with GitHub App)** instead.
 2. **Build Pack: Docker Compose**, compose location `/docker-compose.yaml` (the default). Leave **Domains** empty.
 3. **Environment Variables**: Coolify lists every `${VAR}` from the compose file with its default. Set `WHITELIST_STEAMID`, `PZ_OPEN=false`, `PZ_RCON_PASSWORD`, `MEMORY=3g` as needed; `ADMIN_PASSWORD` can stay empty.
-4. Deploy. The first deployment builds the image and then downloads ~7 GB from Steam, so give it time and watch the container logs, not just the build log. If you set any `PZ_*` variable or `WHITELIST_STEAMID`, the container restarts itself once after that first boot to apply them; Coolify may show it as restarting for a minute.
+4. Deploy. The first deployment builds the image and then downloads ~7 GB from Steam, so give it time and watch the container logs, not just the build log. The container then restarts itself once to apply the `.ini` settings (see "Server `.ini` settings"); Coolify may show it as restarting for a minute.
 
 Notes for Coolify:
 
 - Coolify names the container (`pz-server-<uuid>`) and prefixes the volumes (`<uuid>_pz-data`, `<uuid>_pz-server`) itself, so `docker exec -it pz-server …` from this README becomes that container name. Inside Coolify's **Terminal** for the resource just run `console` or `rcon players`.
 - Environment variables set in Coolify are the source of truth on every deploy; a value set there overrides the compose default, an empty one leaves the `.ini` key alone, exactly as described below.
-- Every push to `main` triggers a rebuild and redeploy through the GitHub App webhook. The world is on the volume and survives it, but players get disconnected, so push when nobody is playing.
+- With automatic deployment on, every push to the tracked branch rebuilds and redeploys. The world is on the volume and survives it, but players get disconnected, so deploy when nobody is playing or switch automatic deployment off and deploy by hand.
 - The **Dockerfile** build pack works too; you then enter the ports, both volumes, the memory limit and the stop grace period (120 s, under Advanced) in Coolify's UI by hand.
 
 ## Server console
