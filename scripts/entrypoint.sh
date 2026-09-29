@@ -325,8 +325,10 @@ start_server() {
   : > "$SCREEN_LOG"
 
   log "starting server in screen session '${SCREEN_NAME}'"
+  # Values travel as arguments, never spliced into the script, so any character is safe.
   screen -dmS "$SCREEN_NAME" -L -Logfile "$SCREEN_LOG" \
-    bash -c "cd '${SERVER_DIR}' && exec ./start-server.sh -servername '${SERVER_NAME}' -adminpassword '${ADMIN_PASSWORD}'"
+    bash -c 'cd "$1" && exec ./start-server.sh -servername "$2" -adminpassword "$3"' _ \
+    "$SERVER_DIR" "$SERVER_NAME" "$ADMIN_PASSWORD"
 
   sleep 3
   if ! screen -list | grep -q "$SCREEN_NAME"; then
