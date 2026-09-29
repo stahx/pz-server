@@ -107,7 +107,7 @@ PZ_MODS=ModIdOne;ModIdTwo                  # mod ids from each mod's mod.info; o
 
 `PZ_WORKSHOP_ITEMS` and `PZ_MODS` are declarative: the server runs exactly what they list and nothing else. Clear them and the mods are gone, including their files, because anything not listed is deleted from `steamapps/workshop/content/108600/` before the game starts and the server re-downloads only what it needs. Unlike the other `.ini` variables, these two do not need the dash to be cleared.
 
-On start the server downloads the listed Workshop items into the install volume. A player joining is prompted by the game to subscribe to the missing mods and Steam downloads them; nothing is handed out by hand. Mod updates are picked up on the next server start, so restart after Workshop updates.
+On start the server downloads the listed Workshop items into the install volume. A player joining is prompted by the game to subscribe to the missing mods and Steam downloads them; nothing is handed out by hand. Mod updates are picked up on the next server start; the update watcher below restarts the server for them, because the game refuses players whose Steam already has a newer version of a mod.
 
 Pick mod versions that match the build your server runs, and mind that a mod's id can differ between builds. Map and overhaul mods raise memory use, so raise `MEMORY` (and `MEM_LIMIT`) when adding them. Mods that are not on the Workshop go into `Zomboid/mods/<name>/` on the data volume and are listed in `PZ_MODS` only.
 
@@ -141,11 +141,17 @@ docker exec <container> grep -m1 -aoE 'version=[0-9.]+' /home/pz/Zomboid/console
 
 ### Updating while the server runs
 
-Nothing restarts the container on its own, so a server left running keeps its build until something restarts it. That matters here: Steam updates players' clients automatically and Project Zomboid refuses a client whose version differs from the server's, so a stale server locks everyone out.
+Nothing restarts the container on its own, so a server left running keeps its build until something restarts it. That matters here: Steam updates players' clients and their Workshop mods automatically, and Project Zomboid refuses a client whose game or mod versions differ from the server's, so a stale server locks everyone out.
 
-Every `UPDATE_CHECK_INTERVAL` seconds (hourly by default) the entrypoint polls Steam for the build id of the branch it tracks. When it changes, the server announces the restart in game, waits `UPDATE_ANNOUNCE_SECONDS`, then quits cleanly; the restart policy brings the container back and the usual start-up update installs the new build. Players are disconnected for the length of one restart, a minute or two.
+Every `UPDATE_CHECK_INTERVAL` seconds (hourly by default) the entrypoint looks for two things: a new build id on the Steam branch it tracks, and, when `PZ_WORKSHOP_ITEMS` is set, Workshop items newer than the installed ones (the game's own `checkModsNeedUpdate`). When either turns up, the server restarts in the least disruptive way:
 
-The check is read-only (`app_info_print`) and never touches the install, so it is safe to run alongside the game. Set `UPDATE_CHECK_INTERVAL=0` to keep updating on restart but never automatically, or `SKIP_UPDATE=true` to stop updating altogether.
+- **Nobody online:** it quits right away.
+- **Players online:** a message in chat every 5 minutes asks them to log out, and the server restarts within half a minute of the last one leaving.
+- **Still online after `UPDATE_FORCE_SECONDS`** (default `1800`, 30 minutes): the restart is forced, with a countdown in chat every second for the last 30 seconds.
+
+Each restart is a clean `quit`, so the world is saved; the restart policy brings the container back, the start-up update installs the new build and the game fetches the newer mods. Players are disconnected for the length of one restart, a minute or two. Set `UPDATE_FORCE_SECONDS=0` to restart immediately whoever is online.
+
+The build check is read-only (`app_info_print`) and never touches the install, so it is safe to run alongside the game. Set `UPDATE_CHECK_INTERVAL=0` to keep updating on restart but never automatically, or `SKIP_UPDATE=true` to stop updating altogether.
 
 ## Stopping and world saves
 
@@ -203,8 +209,8 @@ Copy `.env.example` to `.env` and adjust.
 | `STEAM_VALIDATE` | `false` | re-verify all files on start |
 | `STEAM_REINSTALL` | `false` | emergency: delete and re-download the install |
 | `UPDATE_ATTEMPTS` | `3` | SteamCMD retries |
-| `UPDATE_CHECK_INTERVAL` | `3600` | seconds between Steam build checks while running; 0 disables |
-| `UPDATE_ANNOUNCE_SECONDS` | `60` | in-game warning before an update restart |
+| `UPDATE_CHECK_INTERVAL` | `3600` | seconds between game build and mod update checks while running; 0 disables |
+| `UPDATE_FORCE_SECONDS` | `1800` | how long an update restart waits for players to leave before it is forced |
 | `STOP_TIMEOUT` | `90` | seconds to wait for the world to save |
 | `STARTUP_TIMEOUT` | `300` | seconds to wait for `SERVER STARTED` on a first boot before skipping the one-time restart |
 | `TZ` | `UTC` | container time zone |

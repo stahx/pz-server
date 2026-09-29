@@ -17,7 +17,7 @@ UPDATE_ATTEMPTS="${UPDATE_ATTEMPTS:-3}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-90}"
 STARTUP_TIMEOUT="${STARTUP_TIMEOUT:-300}"
 UPDATE_CHECK_INTERVAL="${UPDATE_CHECK_INTERVAL:-3600}"
-UPDATE_ANNOUNCE_SECONDS="${UPDATE_ANNOUNCE_SECONDS:-60}"
+UPDATE_FORCE_SECONDS="${UPDATE_FORCE_SECONDS:-1800}"
 WHITELIST_STEAMID="${WHITELIST_STEAMID:-}"
 
 SCREEN_LOG="${ZOMBOID_DIR}/console-screen.log"
@@ -132,29 +132,94 @@ latest_buildid() {
         found && /"buildid"/ { gsub(/"/, "", $2); print $2; exit }'
 }
 
-# Polls Steam and, when a new build appears, asks the game to quit. The main loop
-# then exits, the restart policy brings the container back and the start-up update
-# installs the new build.
+# Types a command into the console and waits up to $3 seconds for a line matching $2
+# to appear after it; prints that line.
+console_query() {
+  local offset waited=0 line
+  offset="$(stat -c %s "$SCREEN_LOG")"
+  send_console "$1"
+  while [ "$waited" -lt "$3" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if line="$(tail -c +"$((offset + 1))" "$SCREEN_LOG" | tr -d '\r' | grep -aE "$2" | tail -n 1)"; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Number of connected players; prints nothing when the console does not answer.
+players_online() {
+  console_query "players" 'Players connected \([0-9]+\)' 10 \
+    | sed -E 's/.*Players connected \(([0-9]+)\).*/\1/'
+}
+
+# Prints what calls for a restart: a new build on the tracked Steam branch, or Workshop
+# items newer than the installed ones (the game's own checkModsNeedUpdate). Players
+# whose Steam already updated either one are refused until the server catches up.
+pending_update() {
+  local installed latest mods
+  installed="$(installed_buildid)" || installed=""
+  latest="$(latest_buildid)" || latest=""
+  if [ -n "$installed" ] && [ -n "$latest" ] && [ "$installed" != "$latest" ]; then
+    echo "game build ${installed} -> ${latest}"
+    return 0
+  fi
+
+  [ -n "${PZ_WORKSHOP_ITEMS:-}" ] || return 1
+  mods="$(console_query "checkModsNeedUpdate" 'CheckModsNeedUpdate: (Mods updated|Mods need update|Check not completed)' 120)" || mods=""
+  case "$mods" in
+    *"Mods need update"*) echo "Workshop mod update"; return 0 ;;
+  esac
+  return 1
+}
+
+# Quits as soon as nobody is online. With players on, reminds them every 5 minutes and
+# forces the restart after UPDATE_FORCE_SECONDS, counting the last 30 seconds down in chat.
+restart_for_update() {
+  local nag=300 countdown=30
+  local deadline=$((SECONDS + UPDATE_FORCE_SECONDS)) next_nag=$SECONDS left online
+
+  log "update available (${1}): restarting once the server is empty, at the latest in ${UPDATE_FORCE_SECONDS}s"
+  while true; do
+    left=$((deadline - SECONDS))
+    [ "$left" -gt "$countdown" ] || break
+
+    online="$(players_online)" || online=""
+    if [ "$online" = "0" ]; then
+      log "server empty, restarting for the update"
+      send_console "quit"
+      return 0
+    fi
+
+    if [ "$SECONDS" -ge "$next_nag" ]; then
+      send_console "servermsg \"Server update ready. Log out and it restarts right away, otherwise it restarts in $(((left + 59) / 60)) min\""
+      next_nag=$((SECONDS + nag))
+    fi
+
+    sleep $((left - countdown < 30 ? left - countdown : 30))
+    screen_alive || return 0
+  done
+
+  log "players still online, forcing the restart"
+  for ((left = (UPDATE_FORCE_SECONDS < countdown ? UPDATE_FORCE_SECONDS : countdown); left > 0; left--)); do
+    send_console "servermsg \"Server restarting for an update in ${left}s\""
+    sleep 1
+  done
+  send_console "quit"
+}
+
+# Polls for updates; when one is pending, restart_for_update asks the game to quit.
+# The main loop then exits, the restart policy brings the container back and the
+# start-up update installs the new build, while the game fetches newer mods itself.
 update_watcher() {
-  local installed latest
+  local reason
   while true; do
     sleep "$UPDATE_CHECK_INTERVAL"
     screen_alive || return 0
-
-    installed="$(installed_buildid)"
-    latest="$(latest_buildid)"
-    [ -n "$installed" ] && [ -n "$latest" ] || continue
-    [ "$installed" != "$latest" ] || continue
-
-    log "update available: build ${installed} -> ${latest}"
-    if [ "$UPDATE_ANNOUNCE_SECONDS" -gt 0 ]; then
-      send_console "servermsg \"Server update available, restarting in ${UPDATE_ANNOUNCE_SECONDS} seconds\""
-      sleep "$UPDATE_ANNOUNCE_SECONDS"
-      screen_alive || return 0
-    fi
-
-    log "restarting to install build ${latest}"
-    send_console "quit"
+    reason="$(pending_update)" || continue
+    restart_for_update "$reason"
     return 0
   done
 }
@@ -399,7 +464,7 @@ if [ "$SKIP_UPDATE" = "true" ]; then
 elif [ "$UPDATE_CHECK_INTERVAL" -gt 0 ]; then
   update_watcher &
   WATCHER_PID=$!
-  log "update watcher: checking Steam every ${UPDATE_CHECK_INTERVAL}s"
+  log "update watcher: checking the game build and Workshop mods every ${UPDATE_CHECK_INTERVAL}s"
 fi
 
 tail -n +1 -F "$SCREEN_LOG" &
