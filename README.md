@@ -236,10 +236,11 @@ These map onto keys in `Zomboid/Server/<SERVER_NAME>.ini` and are applied on **e
 | `PZ_BACKUPS_PERIOD` | `BackupsPeriod` |
 | `PZ_BACKUPS_COUNT` | `BackupsCount` |
 | `PZ_SAVE_WORLD_EVERY_MINUTES` | `SaveWorldEveryMinutes` |
+| `PZ_UPNP` | `UPnP` |
 
-**Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. **Set it to a single dash (`-`) to write the key empty** — for these keys clearing a variable does not clear the key, so this is how you drop a server password or a public name. `PZ_MODS` and `PZ_WORKSHOP_ITEMS` are the exception and always follow the environment. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written. The backup and save variables ship with defaults in compose, so they always count as set: change the value to change the key, `0` turns the timer off.
+**Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. **Set it to a single dash (`-`) to write the key empty** — for these keys clearing a variable does not clear the key, so this is how you drop a server password or a public name. `PZ_MODS` and `PZ_WORKSHOP_ITEMS` are the exception and always follow the environment. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written. The backup, save and UPnP variables ship with defaults in compose (`60`, `10`, `15`, `false`), so they always count as set: change the value to change the key, `0` turns a timer off. UPnP is off because a container never reaches a router to open ports on, and the search delays every start.
 
-The game creates the `.ini` during its first boot and only reads it at startup. When any of these variables (or `WHITELIST_STEAMID`) is set on a first boot, which with the backup defaults is always, the entrypoint lets the game create its files, then restarts the server once (a clean `quit`, then the restart policy brings the container back) and applies everything before the second launch, so they are in effect within about a minute.
+The game creates the `.ini` during its first boot and only reads it at startup. When any of these variables (or `WHITELIST_STEAMID`) is set on a first boot, which with those defaults is always, the entrypoint lets the game create its files, then restarts the server once (a clean `quit`, then the restart policy brings the container back) and applies everything before the second launch, so they are in effect within about a minute.
 
 ## Ports
 

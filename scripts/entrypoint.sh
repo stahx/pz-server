@@ -39,6 +39,7 @@ INI_MAPPINGS=(
   "PZ_BACKUPS_PERIOD:BackupsPeriod"
   "PZ_BACKUPS_COUNT:BackupsCount"
   "PZ_SAVE_WORLD_EVERY_MINUTES:SaveWorldEveryMinutes"
+  "PZ_UPNP:UPnP"
 )
 
 log() {
