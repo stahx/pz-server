@@ -36,6 +36,10 @@ INI_MAPPINGS=(
   "PZ_RCON_PASSWORD:RCONPassword"
   "PZ_WORKSHOP_ITEMS:WorkshopItems"
   "PZ_MODS:Mods"
+  "PZ_MAP:Map"
+  "PZ_PUBLIC_DESCRIPTION:PublicDescription"
+  "PZ_WELCOME_MESSAGE:ServerWelcomeMessage"
+  "PZ_PVP:PVP"
   "PZ_BACKUPS_PERIOD:BackupsPeriod"
   "PZ_BACKUPS_COUNT:BackupsCount"
   "PZ_SAVE_WORLD_EVERY_MINUTES:SaveWorldEveryMinutes"
@@ -257,10 +261,12 @@ apply_ini_settings() {
     value="${!env_name:-}"
 
     # Mod keys are declarative: whatever the environment says is what the server gets,
-    # so clearing the variable removes the mods. For the rest an empty variable leaves
-    # the key alone (hand edits survive) and a single dash writes it empty.
+    # so clearing the variable removes the mods, and an empty Map falls back to the base
+    # map instead of pointing at a map mod that is gone. For the rest an empty variable
+    # leaves the key alone (hand edits survive) and a single dash writes it empty.
     case "$ini_key" in
       Mods|WorkshopItems) : ;;
+      Map) [ -n "$value" ] || value="Muldraugh, KY" ;;
       *)
         [ -z "$value" ] && continue
         [ "$value" = "-" ] && value=""
