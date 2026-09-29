@@ -1,7 +1,7 @@
 services:
   pz-server:
     build: .
-    image: pz-server:local
+    image: ghcr.io/stahx/pz-server:latest
     platform: linux/amd64
     container_name: pz-server
     restart: unless-stopped
