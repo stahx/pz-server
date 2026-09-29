@@ -15,7 +15,7 @@ The first start downloads roughly 7 GB from Steam and takes ten to twenty minute
 
 ## Deploying with Coolify
 
-Use a **Git-based** resource with the **Docker Compose** build pack: Coolify clones the repository, builds the image from `Dockerfile` and takes ports, volumes, memory limit and `stop_grace_period` straight from `docker-compose.yaml`. Verified on Coolify 4.3: the UDP ports come out public, RCON stays bound to `127.0.0.1`, the 120 s stop grace period is kept.
+Use a **Git-based** resource with the **Docker Compose** build pack: Coolify clones the repository, builds the image from `Dockerfile` and takes ports, volumes, memory limit and `stop_grace_period` straight from `docker-compose.yaml`. The UDP ports are published, RCON stays bound to `127.0.0.1` and the 120 s stop grace period is kept.
 
 1. Project → **New Resource** → **Private Repository (with GitHub App)** → this repository, branch `main`.
 2. **Build Pack: Docker Compose**, compose location `/docker-compose.yaml` (the default). Leave **Domains** empty.
@@ -171,7 +171,7 @@ The game backs itself up. Each backup is a zip of the world (`Saves/Multiplayer/
 | `backups/startup/` | on every start | `BackupsOnStart` |
 | `backups/version/` | when the game version changes | `BackupsOnVersionChange` |
 
-`backup_1.zip` is the newest. Each folder keeps `PZ_BACKUPS_COUNT` zips (default `10`), so restarts only rotate `startup/` and never push the hourly ones out. Without the period backup, a burst of restarts leaves nothing but startup zips from that burst.
+`backup_1.zip` is the newest. Each folder keeps `PZ_BACKUPS_COUNT` zips (default `10`) and rotates on its own, so restarts never push the hourly ones out.
 
 The backups live on the `pz-data` volume, next to the world they copy. They cover a broken world or a bad mod, not a lost disk or a deleted volume. Copy `backups/` somewhere else, with your panel's volume backup, restic, rclone or similar, and copy the zips rather than the live `Saves/` folder, which the game writes to while it runs.
 
