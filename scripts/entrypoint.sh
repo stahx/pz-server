@@ -18,6 +18,12 @@ SERVER_STOP_TIMEOUT="${SERVER_STOP_TIMEOUT:-90}"
 SERVER_START_TIMEOUT="${SERVER_START_TIMEOUT:-300}"
 UPDATE_CHECK_INTERVAL="${UPDATE_CHECK_INTERVAL:-3600}"
 UPDATE_FORCE_SECONDS="${UPDATE_FORCE_SECONDS:-1800}"
+
+# The game's own defaults for these (0, 0, true) do not suit a server in a container:
+# no periodic backup, no periodic save, and a UPnP search that stalls every start.
+PZ_BACKUPS_PERIOD="${PZ_BACKUPS_PERIOD:-60}"
+PZ_SAVE_WORLD_EVERY_MINUTES="${PZ_SAVE_WORLD_EVERY_MINUTES:-15}"
+PZ_UPNP="${PZ_UPNP:-false}"
 SERVER_WHITELIST_STEAMID="${SERVER_WHITELIST_STEAMID:-}"
 
 SCREEN_LOG="${ZOMBOID_DIR}/console-screen.log"

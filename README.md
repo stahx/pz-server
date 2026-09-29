@@ -6,29 +6,78 @@ Most container images run the server as PID 1, which means `docker exec` drops y
 
 ## Quick start
 
+A prebuilt image is published to `ghcr.io/stahx/pz-server`, so all you need is Docker with Compose on an x86-64 Linux host:
+
 ```bash
-cp .env.example .env     # everything has a default; edit what you need
+mkdir pz-server && cd pz-server
+curl -fsSLO https://raw.githubusercontent.com/stahx/pz-server/main/docker-compose.yaml
+curl -fsSL -o .env https://raw.githubusercontent.com/stahx/pz-server/main/.env.example
+docker compose pull
 docker compose up -d
-docker compose logs -f   # watch the download and the boot
+docker compose logs -f   # Ctrl+C stops following, not the server
 ```
 
-The first start downloads roughly 7 GB from Steam and takes ten to twenty minutes depending on bandwidth. A restart typically takes one to three minutes: a quick Steam build check (files are only re-downloaded when Steam ships a new build) followed by the game's own boot.
+Open **UDP 16261-16262** on the host's firewall and join from the game with `<host address>:16261`. Everything in `.env` has a working default; see "First steps" below for the usual next moves.
 
-## Deploying with Coolify
+The first start downloads roughly 7 GB from Steam and takes ten to twenty minutes depending on bandwidth. Later starts take one to three minutes: a quick Steam build check followed by the game's own boot.
+
+## Ways to run it
+
+### Docker Compose
+
+The quick start above. Configuration lives in `.env` next to `docker-compose.yaml`; after editing it run `docker compose up -d` again, which recreates the container with the new values (`docker compose restart` keeps the old ones).
+
+To build the image yourself instead of pulling it, clone the repository and run `docker compose up -d --build`. To move to a newer image, `docker compose pull` and `docker compose up -d`; the game itself updates on every start regardless.
+
+### docker run
+
+```bash
+docker run -d --name pz-server --restart unless-stopped --stop-timeout 120 \
+  -p 16261:16261/udp -p 16262:16262/udp \
+  -v pz-data:/home/pz/Zomboid -v pz-server:/opt/pzserver \
+  -e SERVER_MEMORY=3g \
+  ghcr.io/stahx/pz-server:latest
+```
+
+Add any variable from "Configuration" with `-e`. Keep `--stop-timeout` above `SERVER_STOP_TIMEOUT` so the world has time to save when the container stops. For RCON also publish `-p 127.0.0.1:27015:27015/tcp`.
+
+### Coolify
 
 Use a **Git-based** resource with the **Docker Compose** build pack: Coolify clones the repository, builds the image from `Dockerfile` and takes ports, volumes, memory limit and `stop_grace_period` straight from `docker-compose.yaml`. The UDP ports are published, RCON stays bound to `127.0.0.1` and the 120 s stop grace period is kept.
 
 1. Project → **New Resource** → **Public Repository** with this repository's URL, branch `main`. For your own fork, pick **Private Repository (with GitHub App)** instead.
 2. **Build Pack: Docker Compose**, compose location `/docker-compose.yaml` (the default). Leave **Domains** empty.
-3. **Environment Variables**: Coolify lists every `${VAR}` from the compose file with its default. Set `SERVER_WHITELIST_STEAMID`, `PZ_OPEN=false`, `PZ_RCON_PASSWORD`, `SERVER_MEMORY=3g` as needed; `SERVER_ADMIN_PASSWORD` can stay empty.
+3. **Environment Variables**: Coolify lists every `${VAR}` from the compose file. Set `SERVER_WHITELIST_STEAMID`, `PZ_OPEN=false`, `PZ_RCON_PASSWORD`, `SERVER_MEMORY` as needed; `SERVER_ADMIN_PASSWORD` can stay empty.
 4. Deploy. The first deployment builds the image and then downloads ~7 GB from Steam, so give it time and watch the container logs, not just the build log. The container then restarts itself once to apply the `.ini` settings (see "Server `.ini` settings"); Coolify may show it as restarting for a minute.
 
 Notes for Coolify:
 
 - Coolify names the container (`pz-server-<uuid>`) and prefixes the volumes (`<uuid>_pz-data`, `<uuid>_pz-server`) itself, so `docker exec -it pz-server …` from this README becomes that container name. Inside Coolify's **Terminal** for the resource just run `console` or `rcon players`.
-- Environment variables set in Coolify are the source of truth on every deploy; a value set there overrides the compose default, an empty one leaves the `.ini` key alone, exactly as described below.
+- Environment variables set in Coolify are the source of truth on every deploy; an empty one leaves the `.ini` key alone, exactly as described below.
 - With automatic deployment on, every push to the tracked branch rebuilds and redeploys. The world is on the volume and survives it, but players get disconnected, so deploy when nobody is playing or switch automatic deployment off and deploy by hand.
 - The **Dockerfile** build pack works too; you then enter the ports, both volumes, the memory limit and the stop grace period (120 s, under Advanced) in Coolify's UI by hand.
+
+### Other panels
+
+Portainer, Dockge and similar take `docker-compose.yaml` as a stack: paste it, set the variables in the panel's environment editor, deploy.
+
+## First steps
+
+1. **Wait for the boot.** Follow the log until the game prints `SERVER STARTED`.
+2. **Join.** In Project Zomboid pick **Join**, enter the host address and port `16261`, and any username and password: the account is created on first login. If you set `PZ_SERVER_PASSWORD`, enter it as the server password.
+3. **Make yourself admin.** Open the console, grant the role, detach:
+   ```bash
+   docker exec -it pz-server console
+   setaccesslevel "<your username>" admin
+   ```
+   then `Ctrl+A`, `D` to leave the console without stopping the server.
+4. **Keep strangers out.** Put your friends' SteamID64s in `.env` and close the server, then `docker compose up -d`:
+   ```bash
+   SERVER_WHITELIST_STEAMID=76561198000000001 76561198000000002
+   PZ_OPEN=false
+   ```
+5. **Add mods** with `PZ_WORKSHOP_ITEMS` and `PZ_MODS` (see "Mods"), then `docker compose up -d`.
+6. **Know where your world is.** It lives on the `pz-data` volume, with hourly backups in `Zomboid/backups/` (see "Backups"). Copy those somewhere else from time to time.
 
 ## Server console
 
@@ -186,7 +235,7 @@ To restore, stop the container, move the current world aside and unpack a backup
 
 ```bash
 docker stop pz-server
-docker run --rm -v pz-data:/home/pz/Zomboid --entrypoint bash pz-server:local -c '
+docker run --rm -v pz-data:/home/pz/Zomboid --entrypoint bash ghcr.io/stahx/pz-server:latest -c '
   cd ~/Zomboid &&
   mv Saves/Multiplayer/pzserver "Saves/Multiplayer/pzserver.before-restore-$(date +%s)" &&
   unzip -o -q backups/period/backup_1.zip "Saves/*" "db/*"'
@@ -209,16 +258,16 @@ Copy `.env.example` to `.env` and adjust. The prefix of a variable says where it
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SERVER_ADMIN_PASSWORD` | random | bootstrap `admin` account password; generated when empty, see "Admin account" above |
 | `SERVER_NAME` | `pzserver` | server name and config file name |
+| `SERVER_ADMIN_PASSWORD` | random | bootstrap `admin` account password; generated when empty, see "Admin account" above |
 | `SERVER_MEMORY` | `3g` | JVM heap; ~3g is a sensible floor for ~6 players |
-| `HOST_MEM_LIMIT` | `5g` | hard container RAM ceiling, keep above `SERVER_MEMORY` |
-| `HOST_GAME_PORT` | `16261` | game port (UDP) |
-| `HOST_PLAYER_PORT` | `16262` | player port (UDP) |
-| `SERVER_WHITELIST_STEAMID` | — | space-separated SteamID64 list (`;` and `,` also accepted), see above |
-| `PZ_RCON_PORT` | `27015` | RCON port (TCP), written to the `.ini` |
-| `PZ_RCON_PASSWORD` | — | enables RCON when set |
+| `SERVER_WHITELIST_STEAMID` | — | space-separated SteamID64 list (`;` and `,` also accepted), see "Whitelist by SteamID" |
+| `SERVER_START_TIMEOUT` | `300` | seconds to wait for `SERVER STARTED` on a first boot before skipping the one-time restart |
+| `SERVER_STOP_TIMEOUT` | `90` | seconds to wait for the world to save |
+| `HOST_GAME_PORT` | `16261` | game port on the host (UDP) |
+| `HOST_PLAYER_PORT` | `16262` | player port on the host (UDP) |
 | `HOST_RCON_BIND` | `127.0.0.1` | host interface the RCON port is published on |
+| `HOST_MEM_LIMIT` | `5g` | hard container RAM ceiling, keep above `SERVER_MEMORY` |
 | `STEAM_BRANCH` | `public` | Steam branch to install and track |
 | `STEAM_SKIP_UPDATE` | `false` | never update: no start-up update, no watcher |
 | `STEAM_VALIDATE` | `false` | re-verify all files on start |
@@ -226,9 +275,9 @@ Copy `.env.example` to `.env` and adjust. The prefix of a variable says where it
 | `STEAM_UPDATE_ATTEMPTS` | `3` | SteamCMD retries |
 | `UPDATE_CHECK_INTERVAL` | `3600` | seconds between game build and mod update checks while running; 0 disables |
 | `UPDATE_FORCE_SECONDS` | `1800` | how long an update restart waits for players to leave before it is forced |
-| `SERVER_STOP_TIMEOUT` | `90` | seconds to wait for the world to save |
-| `SERVER_START_TIMEOUT` | `300` | seconds to wait for `SERVER STARTED` on a first boot before skipping the one-time restart |
 | `TZ` | `UTC` | container time zone |
+
+The `PZ_` variables, RCON's port and password among them, are listed under "Server `.ini` settings".
 
 `PZ_RCON_PASSWORD` is passed as an environment variable and the admin password (set or generated) appears on the game's command line, so anyone who can `docker exec` or `docker inspect` the container can read them. That is the norm for game servers; just do not reuse real passwords.
 
@@ -257,7 +306,7 @@ These map onto keys in `Zomboid/Server/<SERVER_NAME>.ini` and are applied on **e
 | `PZ_SAVE_WORLD_EVERY_MINUTES` | `SaveWorldEveryMinutes` |
 | `PZ_UPNP` | `UPnP` |
 
-**Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. **Set it to a single dash (`-`) to write the key empty** — for these keys clearing a variable does not clear the key, so this is how you drop a server password or a public name. `PZ_MODS`, `PZ_WORKSHOP_ITEMS` and `PZ_MAP` are the exception and always follow the environment. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written. `PZ_BACKUPS_PERIOD`, `PZ_SAVE_WORLD_EVERY_MINUTES` and `PZ_UPNP` ship with defaults in compose (`60`, `15`, `false`) because the game's own (`0`, `0`, `true`) do not suit a server in a container, so they always count as set: change the value to change the key, `0` turns a timer off. UPnP is off because a container never reaches a router to open ports on, and the search delays every start.
+**Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. **Set it to a single dash (`-`) to write the key empty** — for these keys clearing a variable does not clear the key, so this is how you drop a server password or a public name. `PZ_MODS`, `PZ_WORKSHOP_ITEMS` and `PZ_MAP` are the exception and always follow the environment. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written. `PZ_BACKUPS_PERIOD`, `PZ_SAVE_WORLD_EVERY_MINUTES` and `PZ_UPNP` default to `60`, `15` and `false` in the image because the game's own (`0`, `0`, `true`) do not suit a server in a container, so they always count as set: change the value to change the key, `0` turns a timer off. UPnP is off because a container never reaches a router to open ports on, and the search delays every start.
 
 The game creates the `.ini` during its first boot and only reads it at startup. When any of these variables (or `SERVER_WHITELIST_STEAMID`) is set on a first boot, which with those defaults is always, the entrypoint lets the game create its files, then restarts the server once (a clean `quit`, then the restart policy brings the container back) and applies everything before the second launch, so they are in effect within about a minute.
 
@@ -274,9 +323,11 @@ pz-server   → /opt/pzserver      game install (~7 GB, reproducible)
 
 Both are named volumes and persist across restarts, rebuilds and `docker compose down`. Back up `pz-data`, or at least its `backups/` folder (see "Backups"). `pz-server` can be deleted at any time; the next start re-downloads it. Only `docker compose down -v` removes them.
 
+To keep the data in a host folder instead, mount it in place of the volume (`./data:/home/pz/Zomboid`) and hand it to uid 1000, the user the server runs as: `sudo chown -R 1000:1000 ./data`.
+
 ## Architecture
 
-The image is pinned to **`linux/amd64`** because Project Zomboid ships no ARM build. On an x86 host it builds natively; on Apple Silicon Docker builds it under emulation, which is slow.
+The image is **`linux/amd64`** only, because Project Zomboid ships no ARM build. Run it on an x86-64 host; on ARM machines, Apple Silicon included, Docker would have to emulate the whole game server, which is too slow to play on.
 
 ## Notes
 
