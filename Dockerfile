@@ -55,4 +55,9 @@ WORKDIR /home/pz
 
 EXPOSE 16261/udp 16262/udp 27015/tcp
 
+# Healthy once the game runs in its screen session and has logged SERVER STARTED.
+# The start period covers a first start, which downloads ~7 GB before the game boots.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30m --retries=3 \
+  CMD screen -list | grep -q "$SCREEN_NAME" && grep -aq 'SERVER STARTED' "$ZOMBOID_DIR/console-screen.log"
+
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
