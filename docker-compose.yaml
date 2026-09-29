@@ -8,19 +8,19 @@ services:
     stop_grace_period: 120s
     environment:
       SERVER_NAME: ${SERVER_NAME:-pzserver}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      MEMORY: ${MEMORY:-3g}
+      SERVER_ADMIN_PASSWORD: ${SERVER_ADMIN_PASSWORD:-}
+      SERVER_MEMORY: ${SERVER_MEMORY:-3g}
       STEAM_BRANCH: ${STEAM_BRANCH:-public}
-      SKIP_UPDATE: ${SKIP_UPDATE:-false}
+      STEAM_SKIP_UPDATE: ${STEAM_SKIP_UPDATE:-false}
       STEAM_VALIDATE: ${STEAM_VALIDATE:-false}
       STEAM_REINSTALL: ${STEAM_REINSTALL:-false}
-      UPDATE_ATTEMPTS: ${UPDATE_ATTEMPTS:-3}
-      STOP_TIMEOUT: ${STOP_TIMEOUT:-90}
-      STARTUP_TIMEOUT: ${STARTUP_TIMEOUT:-300}
+      STEAM_UPDATE_ATTEMPTS: ${STEAM_UPDATE_ATTEMPTS:-3}
+      SERVER_STOP_TIMEOUT: ${SERVER_STOP_TIMEOUT:-90}
+      SERVER_START_TIMEOUT: ${SERVER_START_TIMEOUT:-300}
       UPDATE_CHECK_INTERVAL: ${UPDATE_CHECK_INTERVAL:-3600}
-      UPDATE_ANNOUNCE_SECONDS: ${UPDATE_ANNOUNCE_SECONDS:-60}
+      UPDATE_FORCE_SECONDS: ${UPDATE_FORCE_SECONDS:-1800}
       TZ: ${TZ:-UTC}
-      WHITELIST_STEAMID: ${WHITELIST_STEAMID:-}
+      SERVER_WHITELIST_STEAMID: ${SERVER_WHITELIST_STEAMID:-}
       PZ_OPEN: ${PZ_OPEN:-}
       PZ_PUBLIC: ${PZ_PUBLIC:-}
       PZ_PUBLIC_NAME: ${PZ_PUBLIC_NAME:-}
@@ -31,14 +31,28 @@ services:
       PZ_RCON_PASSWORD: ${PZ_RCON_PASSWORD:-}
       PZ_WORKSHOP_ITEMS: ${PZ_WORKSHOP_ITEMS:-}
       PZ_MODS: ${PZ_MODS:-}
+      PZ_MAP: ${PZ_MAP:-}
+      PZ_PUBLIC_DESCRIPTION: ${PZ_PUBLIC_DESCRIPTION:-}
+      PZ_WELCOME_MESSAGE: ${PZ_WELCOME_MESSAGE:-}
+      PZ_PVP: ${PZ_PVP:-}
+      PZ_BACKUPS_PERIOD: ${PZ_BACKUPS_PERIOD:-60}
+      PZ_BACKUPS_COUNT: ${PZ_BACKUPS_COUNT:-}
+      PZ_SAVE_WORLD_EVERY_MINUTES: ${PZ_SAVE_WORLD_EVERY_MINUTES:-15}
+      PZ_UPNP: ${PZ_UPNP:-false}
     ports:
-      - '${GAME_PORT:-16261}:16261/udp'
-      - '${PLAYER_PORT:-16262}:16262/udp'
-      - '${RCON_BIND:-127.0.0.1}:${PZ_RCON_PORT:-27015}:${PZ_RCON_PORT:-27015}/tcp'
+      - '${HOST_GAME_PORT:-16261}:16261/udp'
+      - '${HOST_PLAYER_PORT:-16262}:16262/udp'
+      - '${HOST_RCON_BIND:-127.0.0.1}:${PZ_RCON_PORT:-27015}:${PZ_RCON_PORT:-27015}/tcp'
     volumes:
       - pz-data:/home/pz/Zomboid
       - pz-server:/opt/pzserver
-    mem_limit: ${MEM_LIMIT:-5g}
+    mem_limit: ${HOST_MEM_LIMIT:-5g}
+    # The game console is streamed to the container log, which grows without bound otherwise.
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
 
 volumes:
   pz-data:

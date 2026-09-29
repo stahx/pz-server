@@ -9,16 +9,16 @@ STEAM_APP_ID="${STEAM_APP_ID:-380870}"
 STEAM_BRANCH="${STEAM_BRANCH:-public}"
 
 SERVER_NAME="${SERVER_NAME:-pzserver}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
-MEMORY="${MEMORY:-3g}"
-SKIP_UPDATE="${SKIP_UPDATE:-false}"
+SERVER_ADMIN_PASSWORD="${SERVER_ADMIN_PASSWORD:-}"
+SERVER_MEMORY="${SERVER_MEMORY:-3g}"
+STEAM_SKIP_UPDATE="${STEAM_SKIP_UPDATE:-false}"
 STEAM_VALIDATE="${STEAM_VALIDATE:-false}"
-UPDATE_ATTEMPTS="${UPDATE_ATTEMPTS:-3}"
-STOP_TIMEOUT="${STOP_TIMEOUT:-90}"
-STARTUP_TIMEOUT="${STARTUP_TIMEOUT:-300}"
+STEAM_UPDATE_ATTEMPTS="${STEAM_UPDATE_ATTEMPTS:-3}"
+SERVER_STOP_TIMEOUT="${SERVER_STOP_TIMEOUT:-90}"
+SERVER_START_TIMEOUT="${SERVER_START_TIMEOUT:-300}"
 UPDATE_CHECK_INTERVAL="${UPDATE_CHECK_INTERVAL:-3600}"
-UPDATE_ANNOUNCE_SECONDS="${UPDATE_ANNOUNCE_SECONDS:-60}"
-WHITELIST_STEAMID="${WHITELIST_STEAMID:-}"
+UPDATE_FORCE_SECONDS="${UPDATE_FORCE_SECONDS:-1800}"
+SERVER_WHITELIST_STEAMID="${SERVER_WHITELIST_STEAMID:-}"
 
 SCREEN_LOG="${ZOMBOID_DIR}/console-screen.log"
 INI_FILE="${ZOMBOID_DIR}/Server/${SERVER_NAME}.ini"
@@ -36,6 +36,14 @@ INI_MAPPINGS=(
   "PZ_RCON_PASSWORD:RCONPassword"
   "PZ_WORKSHOP_ITEMS:WorkshopItems"
   "PZ_MODS:Mods"
+  "PZ_MAP:Map"
+  "PZ_PUBLIC_DESCRIPTION:PublicDescription"
+  "PZ_WELCOME_MESSAGE:ServerWelcomeMessage"
+  "PZ_PVP:PVP"
+  "PZ_BACKUPS_PERIOD:BackupsPeriod"
+  "PZ_BACKUPS_COUNT:BackupsCount"
+  "PZ_SAVE_WORLD_EVERY_MINUTES:SaveWorldEveryMinutes"
+  "PZ_UPNP:UPnP"
 )
 
 log() {
@@ -43,11 +51,11 @@ log() {
 }
 
 update_server() {
-  if [ "$SKIP_UPDATE" = "true" ]; then
+  if [ "$STEAM_SKIP_UPDATE" = "true" ]; then
     if [ "${STEAM_REINSTALL:-false}" = "true" ]; then
-      log "WARNING: STEAM_REINSTALL needs an update to run, but SKIP_UPDATE=true; not wiping anything"
+      log "WARNING: STEAM_REINSTALL needs an update to run, but STEAM_SKIP_UPDATE=true; not wiping anything"
     fi
-    log "SKIP_UPDATE=true, skipping update"
+    log "STEAM_SKIP_UPDATE=true, skipping update"
     return 0
   fi
 
@@ -75,8 +83,8 @@ update_server() {
   "${STEAMCMD_DIR}/steamcmd.sh" +quit >/dev/null 2>&1 || true
 
   local attempt=1 output
-  while [ "$attempt" -le "$UPDATE_ATTEMPTS" ]; do
-    log "updating server (app ${STEAM_APP_ID}), attempt ${attempt}/${UPDATE_ATTEMPTS}"
+  while [ "$attempt" -le "$STEAM_UPDATE_ATTEMPTS" ]; do
+    log "updating server (app ${STEAM_APP_ID}), attempt ${attempt}/${STEAM_UPDATE_ATTEMPTS}"
 
     # shellcheck disable=SC2086
     # app_info_update refreshes the cached app info; without it steamcmd trusts a
@@ -102,11 +110,11 @@ update_server() {
   done
 
   if [ -x "${SERVER_DIR}/start-server.sh" ]; then
-    log "WARNING: update failed after ${UPDATE_ATTEMPTS} attempts, starting the build already installed"
+    log "WARNING: update failed after ${STEAM_UPDATE_ATTEMPTS} attempts, starting the build already installed"
     return 0
   fi
 
-  log "ERROR: update failed after ${UPDATE_ATTEMPTS} attempts and no build is installed"
+  log "ERROR: update failed after ${STEAM_UPDATE_ATTEMPTS} attempts and no build is installed"
   return 1
 }
 
@@ -129,29 +137,94 @@ latest_buildid() {
         found && /"buildid"/ { gsub(/"/, "", $2); print $2; exit }'
 }
 
-# Polls Steam and, when a new build appears, asks the game to quit. The main loop
-# then exits, the restart policy brings the container back and the start-up update
-# installs the new build.
+# Types a command into the console and waits up to $3 seconds for a line matching $2
+# to appear after it; prints that line.
+console_query() {
+  local offset waited=0 line
+  offset="$(stat -c %s "$SCREEN_LOG")"
+  send_console "$1"
+  while [ "$waited" -lt "$3" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if line="$(tail -c +"$((offset + 1))" "$SCREEN_LOG" | tr -d '\r' | grep -aE "$2" | tail -n 1)"; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Number of connected players; prints nothing when the console does not answer.
+players_online() {
+  console_query "players" 'Players connected \([0-9]+\)' 10 \
+    | sed -E 's/.*Players connected \(([0-9]+)\).*/\1/'
+}
+
+# Prints what calls for a restart: a new build on the tracked Steam branch, or Workshop
+# items newer than the installed ones (the game's own checkModsNeedUpdate). Players
+# whose Steam already updated either one are refused until the server catches up.
+pending_update() {
+  local installed latest mods
+  installed="$(installed_buildid)" || installed=""
+  latest="$(latest_buildid)" || latest=""
+  if [ -n "$installed" ] && [ -n "$latest" ] && [ "$installed" != "$latest" ]; then
+    echo "game build ${installed} -> ${latest}"
+    return 0
+  fi
+
+  [ -n "${PZ_WORKSHOP_ITEMS:-}" ] || return 1
+  mods="$(console_query "checkModsNeedUpdate" 'CheckModsNeedUpdate: (Mods updated|Mods need update|Check not completed)' 120)" || mods=""
+  case "$mods" in
+    *"Mods need update"*) echo "Workshop mod update"; return 0 ;;
+  esac
+  return 1
+}
+
+# Quits as soon as nobody is online. With players on, reminds them every 5 minutes and
+# forces the restart after UPDATE_FORCE_SECONDS, counting the last 30 seconds down in chat.
+restart_for_update() {
+  local nag=300 countdown=30
+  local deadline=$((SECONDS + UPDATE_FORCE_SECONDS)) next_nag=$SECONDS left online
+
+  log "update available (${1}): restarting once the server is empty, at the latest in ${UPDATE_FORCE_SECONDS}s"
+  while true; do
+    left=$((deadline - SECONDS))
+    [ "$left" -gt "$countdown" ] || break
+
+    online="$(players_online)" || online=""
+    if [ "$online" = "0" ]; then
+      log "server empty, restarting for the update"
+      send_console "quit"
+      return 0
+    fi
+
+    if [ "$SECONDS" -ge "$next_nag" ]; then
+      send_console "servermsg \"Server update ready. Log out and it restarts right away, otherwise it restarts in $(((left + 59) / 60)) min\""
+      next_nag=$((SECONDS + nag))
+    fi
+
+    sleep $((left - countdown < 30 ? left - countdown : 30))
+    screen_alive || return 0
+  done
+
+  log "players still online, forcing the restart"
+  for ((left = (UPDATE_FORCE_SECONDS < countdown ? UPDATE_FORCE_SECONDS : countdown); left > 0; left--)); do
+    send_console "servermsg \"Server restarting for an update in ${left}s\""
+    sleep 1
+  done
+  send_console "quit"
+}
+
+# Polls for updates; when one is pending, restart_for_update asks the game to quit.
+# The main loop then exits, the restart policy brings the container back and the
+# start-up update installs the new build, while the game fetches newer mods itself.
 update_watcher() {
-  local installed latest
+  local reason
   while true; do
     sleep "$UPDATE_CHECK_INTERVAL"
     screen_alive || return 0
-
-    installed="$(installed_buildid)"
-    latest="$(latest_buildid)"
-    [ -n "$installed" ] && [ -n "$latest" ] || continue
-    [ "$installed" != "$latest" ] || continue
-
-    log "update available: build ${installed} -> ${latest}"
-    if [ "$UPDATE_ANNOUNCE_SECONDS" -gt 0 ]; then
-      send_console "servermsg \"Server update available, restarting in ${UPDATE_ANNOUNCE_SECONDS} seconds\""
-      sleep "$UPDATE_ANNOUNCE_SECONDS"
-      screen_alive || return 0
-    fi
-
-    log "restarting to install build ${latest}"
-    send_console "quit"
+    reason="$(pending_update)" || continue
+    restart_for_update "$reason"
     return 0
   done
 }
@@ -160,8 +233,8 @@ apply_memory_limit() {
   local config="${SERVER_DIR}/ProjectZomboid64.json"
   [ -f "$config" ] || return 0
 
-  log "setting JVM heap to ${MEMORY}"
-  sed -i -E "s/\"-Xmx[^\"]*\"/\"-Xmx${MEMORY}\"/; s/\"-Xms[^\"]*\"/\"-Xms${MEMORY}\"/" "$config"
+  log "setting JVM heap to ${SERVER_MEMORY}"
+  sed -i -E "s/\"-Xmx[^\"]*\"/\"-Xmx${SERVER_MEMORY}\"/; s/\"-Xms[^\"]*\"/\"-Xms${SERVER_MEMORY}\"/" "$config"
 }
 
 # Escapes a value for use on the right-hand side of a sed s|||-expression.
@@ -188,10 +261,12 @@ apply_ini_settings() {
     value="${!env_name:-}"
 
     # Mod keys are declarative: whatever the environment says is what the server gets,
-    # so clearing the variable removes the mods. For the rest an empty variable leaves
-    # the key alone (hand edits survive) and a single dash writes it empty.
+    # so clearing the variable removes the mods, and an empty Map falls back to the base
+    # map instead of pointing at a map mod that is gone. For the rest an empty variable
+    # leaves the key alone (hand edits survive) and a single dash writes it empty.
     case "$ini_key" in
       Mods|WorkshopItems) : ;;
+      Map) [ -n "$value" ] || value="Muldraugh, KY" ;;
       *)
         [ -z "$value" ] && continue
         [ "$value" = "-" ] && value=""
@@ -238,7 +313,7 @@ prune_workshop() {
 # Warn when none of the latter two exist, so a closed server does not lock everyone out.
 warn_if_locked_out() {
   [ "${PZ_OPEN:-}" = "false" ] || return 0
-  [ -z "$WHITELIST_STEAMID" ] || return 0
+  [ -z "$SERVER_WHITELIST_STEAMID" ] || return 0
 
   local allowed=0 accounts=0
   if [ -s "$DB_FILE" ]; then
@@ -248,7 +323,7 @@ warn_if_locked_out() {
 
   if [ "$allowed" = "0" ] && [ "$accounts" = "0" ]; then
     log "WARNING: PZ_OPEN=false with no allowed SteamIDs and no player accounts: only 'admin' can join."
-    log "WARNING: set WHITELIST_STEAMID=\"<steamid64> <steamid64>\" or run in the console: addsteamid \"<steamid64>\""
+    log "WARNING: set SERVER_WHITELIST_STEAMID=\"<steamid64> <steamid64>\" or run in the console: addsteamid \"<steamid64>\""
   fi
 }
 
@@ -257,8 +332,10 @@ start_server() {
   : > "$SCREEN_LOG"
 
   log "starting server in screen session '${SCREEN_NAME}'"
+  # Values travel as arguments, never spliced into the script, so any character is safe.
   screen -dmS "$SCREEN_NAME" -L -Logfile "$SCREEN_LOG" \
-    bash -c "cd '${SERVER_DIR}' && exec ./start-server.sh -servername '${SERVER_NAME}' -adminpassword '${ADMIN_PASSWORD}'"
+    bash -c 'cd "$1" && exec ./start-server.sh -servername "$2" -adminpassword "$3"' _ \
+    "$SERVER_DIR" "$SERVER_NAME" "$SERVER_ADMIN_PASSWORD"
 
   sleep 3
   if ! screen -list | grep -q "$SCREEN_NAME"; then
@@ -284,8 +361,8 @@ wait_for_server_started() {
       log "ERROR: server exited during startup"
       return 1
     fi
-    if [ "$waited" -ge "$STARTUP_TIMEOUT" ]; then
-      log "WARNING: no 'SERVER STARTED' after ${STARTUP_TIMEOUT}s, skipping post-start steps"
+    if [ "$waited" -ge "$SERVER_START_TIMEOUT" ]; then
+      log "WARNING: no 'SERVER STARTED' after ${SERVER_START_TIMEOUT}s, skipping post-start steps"
       return 1
     fi
     sleep 2
@@ -294,11 +371,11 @@ wait_for_server_started() {
   log "server started after ~${waited}s"
 }
 
-# WHITELIST_STEAMID is additive: every listed SteamID64 is inserted into the game's
+# SERVER_WHITELIST_STEAMID is additive: every listed SteamID64 is inserted into the game's
 # allowedsteamid table before the server starts; nothing is ever removed.
 # Ids may be separated by spaces, semicolons or commas.
 apply_whitelist() {
-  [ -n "$WHITELIST_STEAMID" ] || return 0
+  [ -n "$SERVER_WHITELIST_STEAMID" ] || return 0
   [ -s "$DB_FILE" ] || return 0
 
   if [ "$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='allowedsteamid';")" != "1" ]; then
@@ -317,22 +394,22 @@ apply_whitelist() {
         present=$((present + 1))
       fi
     else
-      log "WHITELIST_STEAMID: skipping '${id}', expected a 17-digit SteamID64"
+      log "SERVER_WHITELIST_STEAMID: skipping '${id}', expected a 17-digit SteamID64"
       skipped=$((skipped + 1))
     fi
-  done < <(printf '%s\n' "$WHITELIST_STEAMID" | tr ';, \t' '\n\n\n\n' | tr -d '\r')
+  done < <(printf '%s\n' "$SERVER_WHITELIST_STEAMID" | tr ';, \t' '\n\n\n\n' | tr -d '\r')
 
-  log "WHITELIST_STEAMID: ${added} added, ${present} already present, ${skipped} skipped"
+  log "SERVER_WHITELIST_STEAMID: ${added} added, ${present} already present, ${skipped} skipped"
 }
 
-# Sends `quit` so the game saves the world, then waits up to STOP_TIMEOUT for it to exit.
+# Sends `quit` so the game saves the world, then waits up to SERVER_STOP_TIMEOUT for it to exit.
 stop_server() {
   send_console "quit"
 
   local waited=0
   while screen_alive; do
-    if [ "$waited" -ge "$STOP_TIMEOUT" ]; then
-      log "timed out after ${STOP_TIMEOUT}s, killing the session"
+    if [ "$waited" -ge "$SERVER_STOP_TIMEOUT" ]; then
+      log "timed out after ${SERVER_STOP_TIMEOUT}s, killing the session"
       screen -S "$SCREEN_NAME" -X quit || true
       break
     fi
@@ -354,9 +431,9 @@ trap graceful_stop SIGTERM SIGINT
 
 # The game insists on a bootstrap 'admin' account. Nobody needs to log in with it:
 # grant admin to your own Steam-bound account instead (setaccesslevel "<name>" admin).
-if [ -z "$ADMIN_PASSWORD" ]; then
-  ADMIN_PASSWORD="$(head -c 512 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-32)"
-  log "ADMIN_PASSWORD not set: generated a random one for the bootstrap admin account (not logged)"
+if [ -z "$SERVER_ADMIN_PASSWORD" ]; then
+  SERVER_ADMIN_PASSWORD="$(head -c 512 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-32)"
+  log "SERVER_ADMIN_PASSWORD not set: generated a random one for the bootstrap admin account (not logged)"
 fi
 
 update_server
@@ -379,7 +456,7 @@ start_server
 # them at startup, so after a first boot the server is restarted once; the second
 # start then applies the .ini settings and the whitelist before launching the game.
 if wait_for_server_started && [ "$FIRST_BOOT" = true ]; then
-  if has_ini_overrides || [ -n "$WHITELIST_STEAMID" ]; then
+  if has_ini_overrides || [ -n "$SERVER_WHITELIST_STEAMID" ]; then
     log "first boot: restarting once so the .ini settings and the whitelist take effect"
     stop_server
     log "exiting for the restart policy to bring the container back"
@@ -390,13 +467,13 @@ fi
 log "ready. Console: docker exec -it <container> console   RCON: docker exec <container> rcon players"
 
 WATCHER_PID=""
-if [ "$SKIP_UPDATE" = "true" ]; then
+if [ "$STEAM_SKIP_UPDATE" = "true" ]; then
   # Restarting would not change the build, so the watcher would loop forever.
-  log "update watcher: off, SKIP_UPDATE=true pins the server to its current build"
+  log "update watcher: off, STEAM_SKIP_UPDATE=true pins the server to its current build"
 elif [ "$UPDATE_CHECK_INTERVAL" -gt 0 ]; then
   update_watcher &
   WATCHER_PID=$!
-  log "update watcher: checking Steam every ${UPDATE_CHECK_INTERVAL}s"
+  log "update watcher: checking the game build and Workshop mods every ${UPDATE_CHECK_INTERVAL}s"
 fi
 
 tail -n +1 -F "$SCREEN_LOG" &
