@@ -43,6 +43,12 @@ services:
       - pz-data:/home/pz/Zomboid
       - pz-server:/opt/pzserver
     mem_limit: ${MEM_LIMIT:-5g}
+    # The game console is streamed to the container log, which grows without bound otherwise.
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
 
 volumes:
   pz-data:

@@ -262,6 +262,7 @@ The image is pinned to **`linux/amd64`** because Project Zomboid ships no ARM bu
 ## Notes
 
 - Project Zomboid's memory use grows with the explored map area. Watch it and raise `MEMORY` deliberately rather than starting high.
+- The container log carries the whole game console and is capped by compose at 3 files of 10 MB. The game keeps its own logs in `Zomboid/Logs/` on the data volume.
 - The image has a healthcheck: the container turns healthy once the game runs in its `screen` session and has logged `SERVER STARTED`, and unhealthy if that session dies. A first start gets 30 minutes of grace for the download.
 - `MEM_LIMIT` protects the rest of the host from a runaway server. It must stay above the JVM heap, or the kernel will kill the process.
 - `sqlite3` is included in the image for inspecting the player database: `docker exec pz-server sqlite3 /home/pz/Zomboid/db/<SERVER_NAME>.db 'SELECT * FROM allowedsteamid;'`
