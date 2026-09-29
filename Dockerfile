@@ -22,6 +22,7 @@ RUN dpkg --add-architecture i386 \
       sqlite3 \
       tini \
       tzdata \
+      unzip \
  && sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen \
  && locale-gen \
  && rm -rf /var/lib/apt/lists/*

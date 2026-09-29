@@ -153,6 +153,35 @@ The check is read-only (`app_info_print`) and never touches the install, so it i
 
 `stop_grace_period` is set to 120s in compose to leave room for that. Keep it above `STOP_TIMEOUT`.
 
+A process that dies without that `quit` (an OOM kill, a host crash) loses whatever the game had not written yet. `PZ_SAVE_WORLD_EVERY_MINUTES` (default `15`) makes the game save the whole world on a timer, which bounds that loss.
+
+## Backups
+
+The game backs itself up. Each backup is a zip of the world (`Saves/Multiplayer/<SERVER_NAME>/`), the account and whitelist database (`db/`) and the config (`Server/`), written to `Zomboid/backups/`:
+
+| Folder | Taken | Controlled by |
+|---|---|---|
+| `backups/period/` | every `PZ_BACKUPS_PERIOD` minutes while the server runs (default `60`) | `BackupsPeriod` |
+| `backups/startup/` | on every start | `BackupsOnStart` |
+| `backups/version/` | when the game version changes | `BackupsOnVersionChange` |
+
+`backup_1.zip` is the newest. Each folder keeps `PZ_BACKUPS_COUNT` zips (default `10`), so restarts only rotate `startup/` and never push the hourly ones out. Without the period backup, a burst of restarts leaves nothing but startup zips from that burst.
+
+The backups live on the `pz-data` volume, next to the world they copy. They cover a broken world or a bad mod, not a lost disk or a deleted volume. Copy `backups/` somewhere else, with your panel's volume backup, restic, rclone or similar, and copy the zips rather than the live `Saves/` folder, which the game writes to while it runs.
+
+To restore, stop the container, move the current world aside and unpack a backup over it, as the `pz` user so the files keep their owner:
+
+```bash
+docker stop pz-server
+docker run --rm -v pz-data:/home/pz/Zomboid --entrypoint bash pz-server:local -c '
+  cd ~/Zomboid &&
+  mv Saves/Multiplayer/pzserver "Saves/Multiplayer/pzserver.before-restore-$(date +%s)" &&
+  unzip -o -q backups/period/backup_1.zip "Saves/*" "db/*"'
+docker start pz-server
+```
+
+Replace `pzserver` with your `SERVER_NAME` and pick the zip you want. On Coolify the container, volume and image carry the resource's prefix; take them from `docker ps` and `docker volume ls`.
+
 ## Configuration
 
 Copy `.env.example` to `.env` and adjust.
@@ -198,10 +227,13 @@ These map onto keys in `Zomboid/Server/<SERVER_NAME>.ini` and are applied on **e
 | `PZ_RCON_PASSWORD` | `RCONPassword` |
 | `PZ_WORKSHOP_ITEMS` | `WorkshopItems` |
 | `PZ_MODS` | `Mods` |
+| `PZ_BACKUPS_PERIOD` | `BackupsPeriod` |
+| `PZ_BACKUPS_COUNT` | `BackupsCount` |
+| `PZ_SAVE_WORLD_EVERY_MINUTES` | `SaveWorldEveryMinutes` |
 
-**Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. **Set it to a single dash (`-`) to write the key empty** — for these keys clearing a variable does not clear the key, so this is how you drop a server password or a public name. `PZ_MODS` and `PZ_WORKSHOP_ITEMS` are the exception and always follow the environment. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written.
+**Leave a variable empty and the key is never touched**, so hand edits to the `.ini` survive restarts. **Set it and the environment wins**, overwriting manual changes on the next start. **Set it to a single dash (`-`) to write the key empty** — for these keys clearing a variable does not clear the key, so this is how you drop a server password or a public name. `PZ_MODS` and `PZ_WORKSHOP_ITEMS` are the exception and always follow the environment. Pick one source of truth per key and stick to it. Values may contain any characters; they are escaped before being written. The backup and save variables ship with defaults in compose, so they always count as set: change the value to change the key, `0` turns the timer off.
 
-The game creates the `.ini` during its first boot and only reads it at startup. When any of these variables (or `WHITELIST_STEAMID`) is set on a first boot, the entrypoint lets the game create its files, then restarts the server once (a clean `quit`, then the restart policy brings the container back) and applies everything before the second launch, so they are in effect within about a minute.
+The game creates the `.ini` during its first boot and only reads it at startup. When any of these variables (or `WHITELIST_STEAMID`) is set on a first boot, which with the backup defaults is always, the entrypoint lets the game create its files, then restarts the server once (a clean `quit`, then the restart policy brings the container back) and applies everything before the second launch, so they are in effect within about a minute.
 
 ## Ports
 
@@ -214,7 +246,7 @@ pz-data     → /home/pz/Zomboid   world, config, database, logs, saves
 pz-server   → /opt/pzserver      game install (~7 GB, reproducible)
 ```
 
-Both are named volumes and persist across restarts, rebuilds and `docker compose down`. Back up `pz-data`. `pz-server` can be deleted at any time; the next start re-downloads it. Only `docker compose down -v` removes them.
+Both are named volumes and persist across restarts, rebuilds and `docker compose down`. Back up `pz-data`, or at least its `backups/` folder (see "Backups"). `pz-server` can be deleted at any time; the next start re-downloads it. Only `docker compose down -v` removes them.
 
 ## Architecture
 

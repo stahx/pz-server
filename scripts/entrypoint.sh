@@ -36,6 +36,9 @@ INI_MAPPINGS=(
   "PZ_RCON_PASSWORD:RCONPassword"
   "PZ_WORKSHOP_ITEMS:WorkshopItems"
   "PZ_MODS:Mods"
+  "PZ_BACKUPS_PERIOD:BackupsPeriod"
+  "PZ_BACKUPS_COUNT:BackupsCount"
+  "PZ_SAVE_WORLD_EVERY_MINUTES:SaveWorldEveryMinutes"
 )
 
 log() {
